@@ -1,10 +1,8 @@
 # AnkiVoice
 
-## Experimental local TTS branch
+## Local TTS (Sherpa-ONNX + Piper)
 
-- Branch: `exp/local-tts-sherpa-piper`
-- Goal: evaluate on-device TTS quality/speed with a pluggable backend path before merging to `main`.
-- Settings → Voice: **System TTS** uses Android `TextToSpeech`; **Local Piper (exp)** runs **Sherpa-ONNX** + Piper VITS models fully on-device.
+- Settings → Voice: **System TTS** uses Android `TextToSpeech`; **Local Piper (exp)** runs **Sherpa-ONNX** + Piper VITS models fully on-device (offline after the first Gradle download of JNI + voice assets).
 
 ### Bundled Piper models (via Sherpa-ONNX releases)
 

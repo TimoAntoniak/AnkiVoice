@@ -4,6 +4,7 @@ Ideas and planned work. Done items are kept briefly for history.
 
 ## Done (recent)
 
+- **On-device neural TTS**: Sherpa-ONNX + Piper (EN `amy-low`, DE `thorsten-medium`), settings backend + Test voice, study integration (`Local Piper (exp)` vs system engine).
 - Explicit **deck id** for scheduling (`limit=?,deckID=?`) so the queue matches the deck you care about (fixes empty queue when another deck was “active” internally).
 - **Deck list** in Settings (hierarchical names with `::`) + “same as AnkiDroid home selection”.
 - **Skip tags**: comma-separated note tags; due cards with any of those tags are **buried** and skipped for voice.
