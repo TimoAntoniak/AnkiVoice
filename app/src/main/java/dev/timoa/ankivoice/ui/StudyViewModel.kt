@@ -403,7 +403,26 @@ class StudyViewModel(
                     continue
                 }
                 _ui.update { it.copy(transcript = heard, phase = StudyPhase.Thinking) }
-                val result = runTutorRound(card, cfg, heard, "voice_session")
+                val result = try {
+                    runTutorRound(card, cfg, heard, "voice_session")
+                } catch (e: Exception) {
+                    logEvent(
+                        "tutor_round_error",
+                        mapOf(
+                            "tag" to classifyErrorTag(e),
+                            "message" to (e.message ?: e.toString()),
+                        ),
+                    )
+                    _ui.update {
+                        it.copy(
+                            phase = StudyPhase.Listening,
+                            errorMessage = localized(cfg, "grade_failed_retry"),
+                        )
+                    }
+                    v.speak(localized(cfg, "grade_failed_retry"))
+                    turn--
+                    continue
+                }
                 if (!_ui.value.sessionRunning) return
 
                 val action = result.action
@@ -535,6 +554,7 @@ class StudyViewModel(
             "http" in msg -> "llm_http_error"
             "recognition" in msg || "speech" in msg || "audio" in msg -> "stt_error"
             "ease" in msg -> "invalid_ease"
+            "grade_answer" in msg -> "missing_grade_tool_call"
             else -> "unknown_error"
         }
     }
@@ -549,6 +569,7 @@ class StudyViewModel(
                     "did_not_catch" -> "Ich habe das nicht verstanden. Bitte nochmal."
                     "did_not_hear" -> "Ich habe nichts gehoert. Bitte nochmal."
                     "fallback_good" -> "Ich bewerte das als Gut und gehe weiter."
+                    "grade_failed_retry" -> "Ich konnte die Bewertung nicht abschliessen. Lass es uns mit derselben Karte nochmal versuchen."
                     else -> key
                 }
             else ->
@@ -557,6 +578,7 @@ class StudyViewModel(
                     "did_not_catch" -> "I didn't catch that. Please try again."
                     "did_not_hear" -> "I didn't hear anything. Try again."
                     "fallback_good" -> "I'll mark this Good and move on."
+                    "grade_failed_retry" -> "I could not complete grading. Let's retry the same card."
                     else -> key
                 }
         }

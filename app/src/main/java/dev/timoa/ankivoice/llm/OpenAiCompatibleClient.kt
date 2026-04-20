@@ -13,15 +13,20 @@ class OpenAiCompatibleClient(
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
-    fun completeChat(
+    fun completeStructuredTurn(
         baseUrl: String,
         apiKey: String,
         model: String,
         messages: List<ChatMessage>,
-    ): Result<String> =
+    ): Result<StructuredLlmTurn> =
         runCatching {
             val url = "${baseUrl.trimEnd('/')}/chat/completions"
-            val body = ChatCompletionRequest(model = model, messages = messages)
+            val body = ChatCompletionRequest(
+                model = model,
+                messages = messages,
+                tools = tutorToolSpecs,
+                toolChoice = OpenAiToolChoice(),
+            )
             val payload = json.encodeToString(body)
             val req = Request.Builder()
                 .url(url)
@@ -35,9 +40,13 @@ class OpenAiCompatibleClient(
                     error("HTTP ${resp.code}: $respBody")
                 }
                 val parsed = json.decodeFromString<ChatCompletionResponse>(respBody)
-                val content = parsed.choices.firstOrNull()?.message?.content
+                val msg = parsed.choices.firstOrNull()?.message
                     ?: error("No message in completion response")
-                content
+                StructuredLlmTurn(
+                    assistantText = msg.content?.trim().orEmpty(),
+                    toolCalls = msg.toolCalls.map { ToolCall(it.function.name, it.function.arguments) },
+                    rawOutput = respBody,
+                )
             }
         }
 

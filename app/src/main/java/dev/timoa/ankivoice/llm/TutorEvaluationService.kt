@@ -19,13 +19,13 @@ class TutorEvaluationService(
     private val llmGateway: LlmCompletionGateway = LlmCompletionGateway(),
 ) {
     constructor(
-        completeFn: suspend (UserSettings, List<ChatMessage>) -> Result<String>,
+        completeFn: suspend (UserSettings, List<ChatMessage>) -> Result<StructuredLlmTurn>,
     ) : this(
         llmGateway = object : LlmCompletionGateway() {
-            override suspend fun completeSuspend(
+            override suspend fun completeStructuredSuspend(
                 settings: UserSettings,
                 messages: List<ChatMessage>,
-            ): Result<String> = completeFn(settings, messages)
+            ): Result<StructuredLlmTurn> = completeFn(settings, messages)
         },
     )
 
@@ -42,22 +42,60 @@ class TutorEvaluationService(
             ChatMessage("user", request.learnerAnswer),
         )
 
-        val rawJson = llmGateway.completeSuspend(request.settings, conversation).getOrElse { throw it }
-        val action = try {
-            parseTutorAction(rawJson)
-        } catch (e: Exception) {
-            throw IllegalStateException("Model returned invalid JSON. Try another model.\n${e.message}", e)
-        }
+        val rawOutputs = mutableListOf<String>()
+        var retry = 0
+        while (true) {
+            val turn = llmGateway.completeStructuredSuspend(request.settings, conversation).getOrElse { throw it }
+            rawOutputs.add(turn.rawOutput)
 
-        require(action.ease != null && action.ease in 1..4) {
-            "Model must return ease 1-4"
-        }
+            if (turn.assistantText.isNotBlank()) {
+                conversation.add(ChatMessage("assistant", turn.assistantText))
+            }
 
-        conversation.add(ChatMessage("assistant", action.assistantSpeech))
-        return TutorEvaluationResult(
-            conversation = conversation,
-            rawJson = rawJson,
-            action = action,
-        )
+            turn.toolCalls.forEach { call ->
+                when (call.name) {
+                    TOOL_REREAD_CARD_FRONT -> {
+                        // Local app action; no special state needed here for v1.
+                    }
+                }
+            }
+
+            val gradeCall = turn.toolCalls.lastOrNull { it.name == TOOL_GRADE_ANSWER }
+            if (gradeCall != null) {
+                val args = try {
+                    parseGradeAnswerArgs(gradeCall.arguments)
+                } catch (e: Exception) {
+                    throw IllegalStateException("Model returned invalid grade_answer arguments. ${e.message}", e)
+                }
+                val action = TutorAction(
+                    assistantSpeech = args.assistantSpeech,
+                    rereadCardFront = turn.toolCalls.any { it.name == TOOL_REREAD_CARD_FRONT },
+                    continueConversation = false,
+                    scheduleReview = true,
+                    ease = args.ease,
+                )
+                validateTutorAction(action)
+                conversation.add(ChatMessage("assistant", action.assistantSpeech))
+                return TutorEvaluationResult(
+                    conversation = conversation,
+                    rawJson = rawOutputs.joinToString("\n---\n"),
+                    action = action,
+                )
+            }
+
+            if (retry >= 1) {
+                throw IllegalStateException("Model did not call grade_answer after retry")
+            }
+            retry++
+            conversation.add(
+                ChatMessage(
+                    "user",
+                    "STOP. CALL grade_answer NOW. REQUIRED IN THIS RESPONSE. " +
+                        "Do NOT ask follow-up questions. Do NOT continue conversation. " +
+                        "Return exactly one grade_answer call with assistant_speech and ease (1..4). " +
+                        "If this was a hint/reminder request, put the hint into assistant_speech and still finalize now.",
+                ),
+            )
+        }
     }
 }

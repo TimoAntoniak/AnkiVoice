@@ -4,6 +4,7 @@ import dev.timoa.ankivoice.settings.AppLanguage
 import dev.timoa.ankivoice.settings.LlmProvider
 import dev.timoa.ankivoice.settings.UserSettings
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -69,8 +70,11 @@ class TutorEvaluationHarnessTest {
                     ),
                 )
                 val action = result.action
-                assertTrue("assistant_speech empty for case=${case.id}", action.assistantSpeech.isNotBlank())
                 assertTrue("ease out of range for case=${case.id}", (action.ease ?: -1) in 1..4)
+                assertTrue("schedule_review must be true for case=${case.id}", action.scheduleReview)
+                if ((action.ease ?: 0) <= 2) {
+                    assertTrue("assistant_speech should contain correction for case=${case.id}", action.assistantSpeech.isNotBlank())
+                }
                 println(
                     """
                     CASE=${case.id}
@@ -79,6 +83,7 @@ class TutorEvaluationHarnessTest {
                     ANSWER=${case.learnerAnswer}
                     RAW=${result.rawJson}
                     PARSED_EASE=${action.ease}
+                    PARSED_SCHEDULE=${action.scheduleReview}
                     PARSED_ASSISTANT=${action.assistantSpeech}
                     ---
                     """.trimIndent(),
@@ -96,9 +101,15 @@ class TutorEvaluationHarnessTest {
     }
 
     @Test
-    fun malformedJsonIsReported() = runBlocking {
+    fun invalidToolArgsIsReported() = runBlocking {
         val fake = TutorEvaluationService { _, _ ->
-            Result.success("not-json")
+            Result.success(
+                StructuredLlmTurn(
+                    assistantText = "",
+                    toolCalls = listOf(ToolCall(TOOL_GRADE_ANSWER, """{"assistant_speech":"ok","ease":9}""")),
+                    rawOutput = "fake",
+                ),
+            )
         }
         val settings = defaultOpenAiLikeSettings()
         val request = TutorEvaluationRequest(
@@ -108,7 +119,67 @@ class TutorEvaluationHarnessTest {
             settings = settings,
         )
         val result = runCatching { fake.evaluate(request) }
-        assertTrue("Malformed JSON should fail", result.isFailure)
+        assertTrue("Invalid tool args should fail", result.isFailure)
+    }
+
+    @Test
+    fun missingFinalToolCallRetriesThenSucceeds() = runBlocking {
+        var calls = 0
+        val fake = TutorEvaluationService { _, _ ->
+            calls++
+            if (calls == 1) {
+                Result.success(
+                    StructuredLlmTurn(
+                        assistantText = "Thinking...",
+                        toolCalls = listOf(ToolCall(TOOL_REREAD_CARD_FRONT, """{"reason":"asked again"}""")),
+                        rawOutput = "first",
+                    ),
+                )
+            } else {
+                Result.success(
+                    StructuredLlmTurn(
+                        assistantText = "",
+                        toolCalls = listOf(ToolCall(TOOL_GRADE_ANSWER, """{"assistant_speech":"Correct.","ease":3}""")),
+                        rawOutput = "second",
+                    ),
+                )
+            }
+        }
+        val out = fake.evaluate(
+            TutorEvaluationRequest(
+                cardFront = "What is 2+2?",
+                cardBack = "4",
+                learnerAnswer = "4",
+                settings = defaultOpenAiLikeSettings(),
+            ),
+        )
+        assertEquals(2, calls)
+        assertEquals(3, out.action.ease)
+        assertTrue(out.action.scheduleReview)
+    }
+
+    @Test
+    fun missingFinalToolCallAfterRetryFails() = runBlocking {
+        val fake = TutorEvaluationService { _, _ ->
+            Result.success(
+                StructuredLlmTurn(
+                    assistantText = "No grade call",
+                    toolCalls = emptyList(),
+                    rawOutput = "none",
+                ),
+            )
+        }
+        val result = runCatching {
+            fake.evaluate(
+                TutorEvaluationRequest(
+                    cardFront = "Q",
+                    cardBack = "A",
+                    learnerAnswer = "A",
+                    settings = defaultOpenAiLikeSettings(),
+                ),
+            )
+        }
+        assertTrue("Must fail when grade_answer never arrives", result.isFailure)
     }
 
     private fun loadSettingsFromEnvOrNull(): UserSettings? {

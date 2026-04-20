@@ -20,8 +20,21 @@ Ideas and planned work. Done items are kept briefly for history.
 6. **Optional cloud STT** (Whisper, etc.) behind BYOK for accuracy vs. device speech.
 7. **Headphone / media-button controls**: play/pause with single press, optional next/previous gesture mapping for hands-free session control.
 8. **Tag-driven AI TTS preprocessor for code/math cards**: if a note has a configured tag, run one extra LLM step to verbalize symbols/code without changing meaning; optional caching into custom note/card metadata to avoid repeated API calls.
-7. **Headphone / media-button controls**: play/pause with single press, optional next/previous gesture mapping for hands-free session control.
-8. **Tag-driven AI TTS preprocessor for code/math cards**: if a note has a configured tag, run one extra LLM step to verbalize symbols/code without changing meaning; optional caching into custom note/card metadata to avoid repeated API calls.
+
+## AI pipeline framework (tool-first, in-app)
+
+- Replace free-form JSON grading with provider tool/function calling, keeping orchestration fully in-app (no extra microservice).
+- Runtime input to the model should include: card front, card back, and learner STT transcript as structured fields.
+- The assistant may answer concisely in text between tool calls when needed, but is incentivized to minimize chatter.
+- Every finalized card interaction should end via an explicit rating tool call (`1..4`) instead of text-only grading.
+- Add framework hooks for future tools: reread card, end conversation, switch deck, and "how many left".
+- Add framework support for code/math readability preprocessing:
+  - Optional AI transform from card content to TTS-friendly phrasing.
+  - Cache transformed text in card/note metadata when feasible to reduce repeat cost.
+  - Add strict "speech-safe output" guardrails: avoid symbols/LaTeX/code notation in tutor speech and rewrite to natural spoken language.
+  - Evaluate whether prompt engineering is enough; if quality remains unstable across models, consider a small fine-tuned rewrite model for speech-safe math/code verbalization.
+- Add support for "do not read this card" semantics (e.g. image/screenshot-heavy backs), configurable via tool and/or metadata policy.
+- Keep advanced capabilities in backlog and ship incrementally, but design the tool router/state machine now so these features plug in without architecture changes.
 
 ## Parking lot
 

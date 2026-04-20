@@ -2,6 +2,8 @@ package dev.timoa.ankivoice.llm
 
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -20,12 +22,12 @@ class AnthropicClient(
         encodeDefaults = true
     }
 
-    fun completeChat(
+    fun completeStructuredTurn(
         baseUrl: String,
         apiKey: String,
         model: String,
         messages: List<ChatMessage>,
-    ): Result<String> =
+    ): Result<StructuredLlmTurn> =
         runCatching {
             val systemAndTurns = splitSystemAndTurns(messages)
             val turns = mergeConsecutiveRoles(systemAndTurns.turns)
@@ -38,6 +40,8 @@ class AnthropicClient(
                 maxTokens = 2048,
                 system = systemAndTurns.system,
                 messages = turns,
+                tools = anthropicTools(),
+                toolChoice = AnthropicToolChoice(),
             )
             val payload = json.encodeToString(body)
             val req = Request.Builder()
@@ -59,8 +63,19 @@ class AnthropicClient(
                     .filter { it.isNotEmpty() }
                     .joinToString("\n")
                     .trim()
-                if (text.isEmpty()) error("No text content in Claude response")
-                text
+                val calls = parsed.content
+                    .filter { it.type == "tool_use" }
+                    .map {
+                        ToolCall(
+                            name = it.name ?: error("Anthropic tool_use missing name"),
+                            arguments = json.encodeToString(it.input ?: buildJsonObject {}),
+                        )
+                    }
+                StructuredLlmTurn(
+                    assistantText = text,
+                    toolCalls = calls,
+                    rawOutput = respBody,
+                )
             }
         }
 
@@ -75,8 +90,18 @@ class AnthropicClient(
         for (m in messages) {
             when (m.role) {
                 "system" -> systemParts.add(m.content)
-                "user", "assistant" -> turns.add(AnthropicTurn(m.role, m.content))
-                else -> turns.add(AnthropicTurn(m.role, m.content))
+                "user", "assistant" -> turns.add(
+                    AnthropicTurn(
+                        m.role,
+                        listOf(AnthropicContentInput(text = m.content)),
+                    ),
+                )
+                else -> turns.add(
+                    AnthropicTurn(
+                        m.role,
+                        listOf(AnthropicContentInput(text = m.content)),
+                    ),
+                )
             }
         }
         val system = systemParts.joinToString("\n\n").takeIf { it.isNotBlank() }
@@ -92,7 +117,14 @@ class AnthropicClient(
             if (last != null && last.role == t.role) {
                 out[out.lastIndex] = AnthropicTurn(
                     t.role,
-                    last.content + "\n\n" + t.content,
+                    listOf(
+                        AnthropicContentInput(
+                            text =
+                                last.content.joinToString("\n\n") { it.text } +
+                                    "\n\n" +
+                                    t.content.joinToString("\n\n") { it.text },
+                        ),
+                    ),
                 )
             } else {
                 out.add(t)
@@ -100,6 +132,20 @@ class AnthropicClient(
         }
         return out
     }
+
+    private fun anthropicTools(): List<AnthropicTool> =
+        listOf(
+            AnthropicTool(
+                name = TOOL_GRADE_ANSWER,
+                description = "Finalize grading for current card with ease (1..4) and concise spoken feedback.",
+                inputSchema = tutorToolSpecs.first { it.function.name == TOOL_GRADE_ANSWER }.function.parameters,
+            ),
+            AnthropicTool(
+                name = TOOL_REREAD_CARD_FRONT,
+                description = "Request app to reread current card front.",
+                inputSchema = tutorToolSpecs.first { it.function.name == TOOL_REREAD_CARD_FRONT }.function.parameters,
+            ),
+        )
 
     companion object {
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
