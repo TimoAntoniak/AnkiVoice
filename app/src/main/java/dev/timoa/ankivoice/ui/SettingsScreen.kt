@@ -1,19 +1,26 @@
 package dev.timoa.ankivoice.ui
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -61,6 +68,7 @@ fun SettingsScreen(
     var ttsRate by remember { mutableStateOf(SecureSettingsRepository.DEFAULT_TTS_RATE) }
     var decks by remember { mutableStateOf<List<AnkiDeckSummary>>(emptyList()) }
     var saved by remember { mutableStateOf(false) }
+    var showAdvanced by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         val s = repo.load()
@@ -101,133 +109,136 @@ fun SettingsScreen(
                 .fillMaxSize(),
         ) {
             item {
-                Text("Language")
-                Row(Modifier.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    FilterChip(
-                        selected = language == AppLanguage.ENGLISH,
-                        onClick = { language = AppLanguage.ENGLISH; saved = false },
-                        label = { Text("English") },
-                        modifier = Modifier.padding(end = 8.dp),
-                    )
-                    FilterChip(
-                        selected = language == AppLanguage.GERMAN,
-                        onClick = { language = AppLanguage.GERMAN; saved = false },
-                        label = { Text("Deutsch") },
-                    )
-                }
-            }
-
-            item {
-                Text("Provider")
-                Row(
-                    Modifier.padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    FilterChip(
-                        selected = provider == LlmProvider.ANTHROPIC_CLAUDE,
-                        onClick = {
-                            if (provider != LlmProvider.ANTHROPIC_CLAUDE) {
-                                provider = LlmProvider.ANTHROPIC_CLAUDE
-                                baseUrl = SecureSettingsRepository.defaultBaseFor(LlmProvider.ANTHROPIC_CLAUDE)
-                                model = SecureSettingsRepository.defaultModelFor(LlmProvider.ANTHROPIC_CLAUDE)
-                                saved = false
-                            }
-                        },
-                        label = { Text("Claude") },
-                        modifier = Modifier.padding(end = 8.dp),
-                    )
-                    FilterChip(
-                        selected = provider == LlmProvider.OPENAI_COMPATIBLE,
-                        onClick = {
-                            if (provider != LlmProvider.OPENAI_COMPATIBLE) {
-                                provider = LlmProvider.OPENAI_COMPATIBLE
-                                baseUrl = SecureSettingsRepository.defaultBaseFor(LlmProvider.OPENAI_COMPATIBLE)
-                                model = SecureSettingsRepository.defaultModelFor(LlmProvider.OPENAI_COMPATIBLE)
-                                saved = false
-                            }
-                        },
-                        label = { Text("OpenAI-compatible") },
-                    )
-                }
-                val hint = when (provider) {
-                    LlmProvider.ANTHROPIC_CLAUDE ->
-                        "Anthropic: API key from the Claude Console. Base URL is usually https://api.anthropic.com/v1"
-                    LlmProvider.OPENAI_COMPATIBLE ->
-                        "OpenAI or any server with POST …/v1/chat/completions."
-                }
-                Text(hint, style = MaterialTheme.typography.bodySmall)
-                OutlinedTextField(
-                    value = apiKey,
-                    onValueChange = { apiKey = it; saved = false },
-                    label = { Text("API key") },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true,
-                    modifier = Modifier.padding(vertical = 8.dp),
-                )
-                OutlinedTextField(
-                    value = baseUrl,
-                    onValueChange = { baseUrl = it; saved = false },
-                    label = { Text("Base URL (no trailing slash)") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                    modifier = Modifier.padding(vertical = 8.dp),
-                )
-                OutlinedTextField(
-                    value = model,
-                    onValueChange = { model = it; saved = false },
-                    label = { Text("Model id") },
-                    singleLine = true,
-                    modifier = Modifier.padding(vertical = 8.dp),
-                )
-            }
-
-            item {
-                Text("TTS speed", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 12.dp))
-                Text("${(ttsRate * 100).roundToInt()}%", style = MaterialTheme.typography.bodySmall)
-                Slider(
-                    value = ttsRate,
-                    onValueChange = { ttsRate = it; saved = false },
-                    valueRange = 0.6f..2.0f,
-                    modifier = Modifier.padding(vertical = 8.dp),
-                )
-            }
-
-            item {
-                Text("Study deck", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 16.dp))
-                Text(
-                    "AnkiVoice always passes an explicit deck to AnkiDroid’s scheduler (fixes “no due cards” when another deck is selected). Sub-decks use :: in the name.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                if (!hasAnkiPermission) {
-                    Text(
-                        "Grant AnkiDroid access from the Study tab to load the deck list here. You can still use “Same as AnkiDroid” if that deck is selected on Anki’s home screen.",
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(vertical = 8.dp),
-                    )
-                }
-            }
-
-            item {
-                val followSelected = studyDeckId == AnkiDroidRepository.DECK_ID_FOLLOW_ANKI_SELECTED
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .selectable(
-                            selected = followSelected,
-                            onClick = {
-                                studyDeckId = AnkiDroidRepository.DECK_ID_FOLLOW_ANKI_SELECTED
-                                saved = false
-                            },
-                            role = Role.RadioButton,
+                SettingsSection(title = "Language") {
+                    Row(
+                        Modifier.padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        FilterChip(
+                            selected = language == AppLanguage.ENGLISH,
+                            onClick = { language = AppLanguage.ENGLISH; saved = false },
+                            label = { Text("English") },
                         )
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(selected = followSelected, onClick = null)
+                        FilterChip(
+                            selected = language == AppLanguage.GERMAN,
+                            onClick = { language = AppLanguage.GERMAN; saved = false },
+                            label = { Text("Deutsch") },
+                        )
+                    }
+                }
+            }
+
+            item {
+                SettingsSection(title = "Model") {
+                    Row(
+                        Modifier.padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        FilterChip(
+                            selected = provider == LlmProvider.ANTHROPIC_CLAUDE,
+                            onClick = {
+                                if (provider != LlmProvider.ANTHROPIC_CLAUDE) {
+                                    provider = LlmProvider.ANTHROPIC_CLAUDE
+                                    baseUrl = SecureSettingsRepository.defaultBaseFor(LlmProvider.ANTHROPIC_CLAUDE)
+                                    model = SecureSettingsRepository.defaultModelFor(LlmProvider.ANTHROPIC_CLAUDE)
+                                    saved = false
+                                }
+                            },
+                            label = { Text("Claude") },
+                        )
+                        FilterChip(
+                            selected = provider == LlmProvider.OPENAI_COMPATIBLE,
+                            onClick = {
+                                if (provider != LlmProvider.OPENAI_COMPATIBLE) {
+                                    provider = LlmProvider.OPENAI_COMPATIBLE
+                                    baseUrl = SecureSettingsRepository.defaultBaseFor(LlmProvider.OPENAI_COMPATIBLE)
+                                    model = SecureSettingsRepository.defaultModelFor(LlmProvider.OPENAI_COMPATIBLE)
+                                    saved = false
+                                }
+                            },
+                            label = { Text("OpenAI-compatible") },
+                        )
+                    }
+                    val hint = when (provider) {
+                        LlmProvider.ANTHROPIC_CLAUDE -> "Use your Claude API key"
+                        LlmProvider.OPENAI_COMPATIBLE -> "Requires /v1/chat/completions support"
+                    }
                     Text(
-                        "Same as AnkiDroid home (whichever deck is selected there)",
-                        modifier = Modifier.padding(start = 8.dp),
+                        hint,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.padding(top = 8.dp),
                     )
+                    OutlinedTextField(
+                        value = apiKey,
+                        onValueChange = { apiKey = it; saved = false },
+                        label = { Text("API key") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp),
+                    )
+                }
+            }
+
+            item {
+                SettingsSection(title = "Voice") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("TTS speed", style = MaterialTheme.typography.titleSmall)
+                        AssistChip(
+                            onClick = {},
+                            enabled = false,
+                            label = { Text("${(ttsRate * 100).roundToInt()}%") },
+                            shape = CircleShape,
+                        )
+                    }
+                    Slider(
+                        value = ttsRate,
+                        onValueChange = { ttsRate = it; saved = false },
+                        valueRange = 0.6f..2.0f,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+            }
+
+            item {
+                SettingsSection(title = "Study deck") {
+                    if (!hasAnkiPermission) {
+                        Text(
+                            "Grant AnkiDroid access in Study to load decks.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+                        )
+                    }
+                    val followSelected = studyDeckId == AnkiDroidRepository.DECK_ID_FOLLOW_ANKI_SELECTED
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = followSelected,
+                                onClick = {
+                                    studyDeckId = AnkiDroidRepository.DECK_ID_FOLLOW_ANKI_SELECTED
+                                    saved = false
+                                },
+                                role = Role.RadioButton,
+                            )
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = followSelected, onClick = null)
+                        Text(
+                            "Same as AnkiDroid home",
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
+                    }
                 }
             }
 
@@ -252,7 +263,7 @@ fun SettingsScreen(
                     Column(Modifier.padding(start = 8.dp)) {
                         Text(deck.fullName)
                         Text(
-                            "due (learn+rev)=${deck.dueForVoice}, new=${deck.newCount}",
+                            "due=${deck.dueForVoice}, new=${deck.newCount}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.secondary,
                         )
@@ -261,18 +272,47 @@ fun SettingsScreen(
             }
 
             item {
-                OutlinedTextField(
-                    value = skipTagsCsv,
-                    onValueChange = { skipTagsCsv = it; saved = false },
-                    label = { Text("Skip voice for notes with these tags") },
-                    placeholder = { Text("e.g. code, no_voice") },
-                    supportingText = {
-                        Text("Comma-separated. Matching due cards are buried so AnkiDroid skips them for now (good for code-heavy cards).")
-                    },
-                    singleLine = false,
-                    minLines = 2,
-                    modifier = Modifier.padding(vertical = 16.dp),
-                )
+                SettingsSection(title = "Advanced", topPadding = 6.dp) {
+                    OutlinedButton(onClick = { showAdvanced = !showAdvanced }) {
+                        Text(if (showAdvanced) "Hide advanced options" else "Show advanced options")
+                    }
+
+                    if (showAdvanced) {
+                        OutlinedTextField(
+                            value = baseUrl,
+                            onValueChange = { baseUrl = it; saved = false },
+                            label = { Text("Base URL") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 12.dp),
+                        )
+                        OutlinedTextField(
+                            value = model,
+                            onValueChange = { model = it; saved = false },
+                            label = { Text("Model id") },
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 10.dp),
+                        )
+                        OutlinedTextField(
+                            value = skipTagsCsv,
+                            onValueChange = { skipTagsCsv = it; saved = false },
+                            label = { Text("Skip tags") },
+                            placeholder = { Text("code, no_voice") },
+                            singleLine = false,
+                            minLines = 2,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 10.dp),
+                        )
+                    }
+                }
+            }
+
+            item {
                 Button(
                     onClick = {
                         repo.save(
@@ -289,10 +329,37 @@ fun SettingsScreen(
                         )
                         saved = true
                     },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp, bottom = 24.dp),
                 ) {
-                    Text(if (saved) "Saved" else "Save")
+                    Text(if (saved) "Saved" else "Save settings")
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SettingsSection(
+    title: String,
+    topPadding: androidx.compose.ui.unit.Dp = 0.dp,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = topPadding),
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            content()
         }
     }
 }
