@@ -7,6 +7,7 @@ data class AnkiCard(
     val cardOrd: Int,
     val questionHtml: String,
     val answerHtml: String,
+    val reviewButtonCount: Int = 4,
 ) {
     val questionSpeech: String get() = questionHtml.stripHtmlForSpeech()
     val answerSpeech: String get() = answerHtml.stripHtmlForSpeech()

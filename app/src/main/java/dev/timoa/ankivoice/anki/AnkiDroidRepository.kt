@@ -46,6 +46,15 @@ class AnkiDroidRepository(
         return null
     }
 
+    fun setAnkiSelectedDeckId(deckId: Long): Result<Unit> =
+        runCatching {
+            val values = ContentValues().apply {
+                put(Deck.DECK_ID, deckId)
+            }
+            val updated = resolver.update(Deck.CONTENT_SELECTED_URI, values, null, null)
+            if (updated <= 0) error("Could not set selected deck in AnkiDroid (updated=$updated).")
+        }
+
     fun queryDeckSummaries(): List<AnkiDeckSummary> {
         val out = mutableListOf<AnkiDeckSummary>()
         resolver.query(
@@ -95,7 +104,8 @@ class AnkiDroidRepository(
             if (!c.moveToFirst()) return null
             val noteId = c.getLong(c.getColumnIndexOrThrow(ReviewInfo.NOTE_ID))
             val ord = c.getInt(c.getColumnIndexOrThrow(ReviewInfo.CARD_ORD))
-            return loadCard(noteId, ord)
+            val buttonCount = c.getColumnIndex(ReviewInfo.BUTTON_COUNT).takeIf { it >= 0 }?.let(c::getInt) ?: -1
+            return loadCard(noteId, ord)?.copy(reviewButtonCount = buttonCount.takeIf { it in 1..4 } ?: 4)
         }
         return null
     }

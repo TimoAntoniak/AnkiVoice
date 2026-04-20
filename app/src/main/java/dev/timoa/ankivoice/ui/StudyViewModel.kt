@@ -323,6 +323,12 @@ class StudyViewModel(
                 }
                 return
             }
+            val selectedDeckBeforeSync = withContext(Dispatchers.IO) { anki.queryAnkiSelectedDeckId() }
+            if (selectedDeckBeforeSync != deckId) {
+                withContext(Dispatchers.IO) {
+                    anki.setAnkiSelectedDeckId(deckId).getOrElse { throw it }
+                }
+            }
             val deckName = withContext(Dispatchers.IO) { anki.queryDeckName(deckId) }
             val deckSummary = withContext(Dispatchers.IO) { anki.queryDeckSummaries().find { it.deckId == deckId } }
             _ui.update {
@@ -376,6 +382,7 @@ class StudyViewModel(
             v.speak(localized(cfg, "here_is_card", card.questionSpeech))
             if (!_ui.value.sessionRunning) return
 
+            var scheduledThisCard = false
             while (_ui.value.sessionRunning && turn < TutorBrain.MAX_TURNS_PER_CARD) {
                 turn++
                 _ui.update { it.copy(phase = StudyPhase.Listening, turnOnCard = turn) }
@@ -433,7 +440,9 @@ class StudyViewModel(
                 }
                 if (!_ui.value.sessionRunning) return
 
-                val ease = action.ease?.takeIf { it in 1..4 } ?: 1
+                val modelEase = action.ease?.takeIf { it in 1..4 } ?: 1
+                val maxAllowedEase = card.reviewButtonCount.coerceIn(1, 4)
+                val ease = modelEase.coerceIn(1, maxAllowedEase)
                 _ui.update { it.copy(phase = StudyPhase.Scheduling) }
                 val elapsed = System.currentTimeMillis() - cardStart
                 withContext(Dispatchers.IO) {
@@ -447,11 +456,12 @@ class StudyViewModel(
                         "elapsed_ms" to elapsed.toString(),
                     ),
                 )
+                scheduledThisCard = true
                 v.playGradeCue(ease)
                 break
             }
 
-            if (turn >= TutorBrain.MAX_TURNS_PER_CARD && _ui.value.sessionRunning) {
+            if (!scheduledThisCard && turn >= TutorBrain.MAX_TURNS_PER_CARD && _ui.value.sessionRunning) {
                 _ui.update { it.copy(phase = StudyPhase.Scheduling) }
                 val elapsed = System.currentTimeMillis() - cardStart
                 withContext(Dispatchers.IO) {
