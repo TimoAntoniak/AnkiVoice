@@ -10,18 +10,27 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import dev.timoa.ankivoice.settings.AppLanguage
+import dev.timoa.ankivoice.settings.TtsBackend
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 class VoiceCoordinator(
     private val activity: Activity,
+    private val diagnostics: (String) -> Unit = {},
 ) : TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var speechRate: Float = 1.0f
+    private var ttsBackend: TtsBackend = TtsBackend.SYSTEM
+    /** Android TTS locale; independent of [Locale.getDefault] device UI language. */
+    private var speechLocale: Locale = AppLanguage.ENGLISH.toSpeechLocale()
+    private var appLanguage: AppLanguage = AppLanguage.ENGLISH
+    private val localPiper = LocalPiperTts(activity)
     private val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 70)
     private val speechRecognizer: SpeechRecognizer? =
         if (SpeechRecognizer.isRecognitionAvailable(activity)) {
@@ -37,8 +46,7 @@ class VoiceCoordinator(
     override fun onInit(status: Int) {
         ttsReady = status == TextToSpeech.SUCCESS
         if (ttsReady) {
-            tts?.language = Locale.getDefault()
-            tts?.setSpeechRate(speechRate)
+            applyBackendConfig()
         }
     }
 
@@ -47,8 +55,34 @@ class VoiceCoordinator(
         tts?.setSpeechRate(speechRate)
     }
 
+    fun setBackend(backend: TtsBackend) {
+        if (ttsBackend == backend) return
+        ttsBackend = backend
+        applyBackendConfig()
+    }
+
+    /**
+     * Applies language, backend, and rate together (used from study session and Settings test).
+     * [TtsBackend.LOCAL_PIPER_EXPERIMENTAL] uses bundled Sherpa-ONNX + Piper; [TtsBackend.SYSTEM] uses Android [TextToSpeech].
+     */
+    fun applyVoiceSettings(language: AppLanguage, backend: TtsBackend, rate: Float) {
+        speechRate = rate.coerceIn(0.6f, 2.0f)
+        ttsBackend = backend
+        appLanguage = language
+        speechLocale = language.toSpeechLocale()
+        tts?.setSpeechRate(speechRate)
+        applyBackendConfig()
+    }
+
+    fun isTtsReady(): Boolean =
+        when (ttsBackend) {
+            TtsBackend.LOCAL_PIPER_EXPERIMENTAL -> true
+            TtsBackend.SYSTEM -> ttsReady
+        }
+
     fun shutdown() {
         speechRecognizer?.destroy()
+        localPiper.release()
         tts?.stop()
         tts?.shutdown()
         tone.release()
@@ -65,15 +99,45 @@ class VoiceCoordinator(
     }
 
     suspend fun speak(text: String) {
+        if (ttsBackend == TtsBackend.LOCAL_PIPER_EXPERIMENTAL) {
+            val startedAtMs = System.currentTimeMillis()
+            diagnostics(
+                "tts_backend_selected local_piper_experimental locale=${speechLocale.toLanguageTag()}",
+            )
+            runCatching {
+                localPiper.speak(text, appLanguage, speechRate, diagnostics)
+            }.getOrElse { e ->
+                diagnostics("piper_error ${e.message ?: e}")
+                throw e
+            }
+            diagnostics(
+                "tts_done backend=${ttsBackend.toStorageValue()} " +
+                    "total_ms=${System.currentTimeMillis() - startedAtMs} chars=${text.length}",
+            )
+            return
+        }
+
         val engine = tts ?: error("TTS not initialized")
         if (!ttsReady) error("TTS not ready")
         val utteranceId = UUID.randomUUID().toString()
+        val startedAtMs = System.currentTimeMillis()
+        val onStartReported = AtomicBoolean(false)
         suspendCancellableCoroutine { cont ->
             engine.setOnUtteranceProgressListener(
                 object : UtteranceProgressListener() {
-                    override fun onStart(utteranceId: String?) {}
+                    override fun onStart(utteranceId: String?) {
+                        if (!onStartReported.compareAndSet(false, true)) return
+                        diagnostics(
+                            "tts_first_audio backend=${ttsBackend.toStorageValue()} " +
+                                "latency_ms=${System.currentTimeMillis() - startedAtMs}",
+                        )
+                    }
 
                     override fun onDone(utteranceId: String?) {
+                        diagnostics(
+                            "tts_done backend=${ttsBackend.toStorageValue()} " +
+                                "total_ms=${System.currentTimeMillis() - startedAtMs} chars=${text.length}",
+                        )
                         if (cont.isActive) cont.resume(Unit)
                     }
 
@@ -92,6 +156,22 @@ class VoiceCoordinator(
             }
             engine.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
             cont.invokeOnCancellation { engine.stop() }
+        }
+    }
+
+    private fun applyBackendConfig() {
+        val engine = tts ?: return
+        engine.setSpeechRate(speechRate)
+        engine.language = speechLocale
+        when (ttsBackend) {
+            TtsBackend.SYSTEM -> {
+                diagnostics("tts_backend_selected system locale=${speechLocale.toLanguageTag()}")
+            }
+            TtsBackend.LOCAL_PIPER_EXPERIMENTAL -> {
+                diagnostics(
+                    "tts_apply local_piper locale=${speechLocale.toLanguageTag()} (sherpa_onnx)",
+                )
+            }
         }
     }
 

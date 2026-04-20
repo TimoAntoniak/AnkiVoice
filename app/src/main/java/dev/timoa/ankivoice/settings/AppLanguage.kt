@@ -1,5 +1,7 @@
 package dev.timoa.ankivoice.settings
 
+import java.util.Locale
+
 enum class AppLanguage {
     ENGLISH,
     GERMAN,
@@ -9,6 +11,13 @@ enum class AppLanguage {
         when (this) {
             ENGLISH -> "en"
             GERMAN -> "de"
+        }
+
+    /** Locale used for Android TTS until a bundled on-device model is active. */
+    fun toSpeechLocale(): Locale =
+        when (this) {
+            ENGLISH -> Locale.US
+            GERMAN -> Locale.GERMAN
         }
 
     companion object {

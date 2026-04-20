@@ -32,6 +32,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,14 +46,18 @@ import dev.timoa.ankivoice.anki.AnkiDroidRepository
 import dev.timoa.ankivoice.settings.AppLanguage
 import dev.timoa.ankivoice.settings.LlmProvider
 import dev.timoa.ankivoice.settings.SecureSettingsRepository
+import dev.timoa.ankivoice.settings.TtsBackend
 import dev.timoa.ankivoice.settings.UserSettings
+import dev.timoa.ankivoice.voice.VoiceCoordinator
 import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
     hasAnkiPermission: Boolean,
+    voice: VoiceCoordinator,
 ) {
     val context = LocalContext.current
     val repo = remember { SecureSettingsRepository(context) }
@@ -63,12 +68,15 @@ fun SettingsScreen(
     var apiKey by remember { mutableStateOf("") }
     var baseUrl by remember { mutableStateOf("") }
     var model by remember { mutableStateOf("") }
+    var ttsBackend by remember { mutableStateOf(TtsBackend.SYSTEM) }
     var studyDeckId by remember { mutableStateOf(AnkiDroidRepository.DECK_ID_FOLLOW_ANKI_SELECTED) }
     var skipTagsCsv by remember { mutableStateOf("") }
     var ttsRate by remember { mutableStateOf(SecureSettingsRepository.DEFAULT_TTS_RATE) }
     var decks by remember { mutableStateOf<List<AnkiDeckSummary>>(emptyList()) }
     var saved by remember { mutableStateOf(false) }
     var showAdvanced by remember { mutableStateOf(false) }
+    var ttsTestError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
         val s = repo.load()
@@ -77,6 +85,7 @@ fun SettingsScreen(
         apiKey = s.apiKey
         baseUrl = s.baseUrl
         model = s.model
+        ttsBackend = s.ttsBackend
         studyDeckId = s.studyDeckId
         skipTagsCsv = s.skipTagsCsv
         ttsRate = s.ttsRate
@@ -186,6 +195,64 @@ fun SettingsScreen(
 
             item {
                 SettingsSection(title = "Voice") {
+                    Row(
+                        Modifier.padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        FilterChip(
+                            selected = ttsBackend == TtsBackend.SYSTEM,
+                            onClick = { ttsBackend = TtsBackend.SYSTEM; saved = false },
+                            label = { Text("System TTS") },
+                        )
+                        FilterChip(
+                            selected = ttsBackend == TtsBackend.LOCAL_PIPER_EXPERIMENTAL,
+                            onClick = { ttsBackend = TtsBackend.LOCAL_PIPER_EXPERIMENTAL; saved = false },
+                            label = { Text("Local Piper (exp)") },
+                        )
+                    }
+                    Text(
+                        when (ttsBackend) {
+                            TtsBackend.SYSTEM ->
+                                "Uses the Android TTS engine and voices you have installed (e.g. Google / Samsung)."
+                            TtsBackend.LOCAL_PIPER_EXPERIMENTAL ->
+                                "Offline Piper (Sherpa-ONNX): neural voice bundled with the app. " +
+                                    "First play may take a few seconds while the model loads."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            ttsTestError = null
+                            scope.launch {
+                                if (!voice.isTtsReady()) {
+                                    ttsTestError = "Voice engine is still loading. Try again in a moment."
+                                    return@launch
+                                }
+                                runCatching {
+                                    voice.applyVoiceSettings(language, ttsBackend, ttsRate)
+                                    voice.speak(ttsTestPhrase(language))
+                                }.onFailure { e ->
+                                    ttsTestError = e.message ?: e.toString()
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp),
+                    ) {
+                        Text("Test voice")
+                    }
+                    ttsTestError?.let { msg ->
+                        Text(
+                            msg,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -322,6 +389,7 @@ fun SettingsScreen(
                                 apiKey = apiKey.trim(),
                                 baseUrl = baseUrl.trim().trimEnd('/'),
                                 model = model.trim(),
+                                ttsBackend = ttsBackend,
                                 studyDeckId = studyDeckId,
                                 skipTagsCsv = skipTagsCsv.trim(),
                                 ttsRate = ttsRate,
@@ -339,6 +407,14 @@ fun SettingsScreen(
         }
     }
 }
+
+private fun ttsTestPhrase(language: AppLanguage): String =
+    when (language) {
+        AppLanguage.ENGLISH ->
+            "This is AnkiVoice. You are hearing the app language and speech speed for study sessions."
+        AppLanguage.GERMAN ->
+            "Das ist AnkiVoice. Du hoerst die App-Sprache und die Sprechgeschwindigkeit fuer das Kartenlernen."
+    }
 
 @Composable
 private fun SettingsSection(

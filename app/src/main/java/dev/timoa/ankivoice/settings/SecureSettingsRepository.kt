@@ -39,6 +39,7 @@ class SecureSettingsRepository(
             apiKey = prefs.getString(KEY_API, "") ?: "",
             baseUrl = (prefs.getString(KEY_BASE, null) ?: defaultBase).trimEnd('/'),
             model = prefs.getString(KEY_MODEL, null) ?: defaultModel,
+            ttsBackend = TtsBackend.fromStorageValue(prefs.getString(KEY_TTS_BACKEND, null)),
             studyDeckId = prefs.getLong(KEY_STUDY_DECK, AnkiDroidRepository.DECK_ID_FOLLOW_ANKI_SELECTED),
             skipTagsCsv = prefs.getString(KEY_SKIP_TAGS, "") ?: "",
             ttsRate = prefs.getFloat(KEY_TTS_RATE, DEFAULT_TTS_RATE),
@@ -52,6 +53,7 @@ class SecureSettingsRepository(
             .putString(KEY_API, settings.apiKey)
             .putString(KEY_BASE, settings.baseUrl.trimEnd('/'))
             .putString(KEY_MODEL, settings.model)
+            .putString(KEY_TTS_BACKEND, settings.ttsBackend.toStorageValue())
             .putLong(KEY_STUDY_DECK, settings.studyDeckId)
             .putString(KEY_SKIP_TAGS, settings.skipTagsCsv)
             .putFloat(KEY_TTS_RATE, settings.ttsRate.coerceIn(0.6f, 2.0f))
@@ -65,6 +67,7 @@ class SecureSettingsRepository(
         private const val KEY_API = "openai_api_key"
         private const val KEY_BASE = "api_base_url"
         private const val KEY_MODEL = "model"
+        private const val KEY_TTS_BACKEND = "tts_backend"
         private const val KEY_STUDY_DECK = "study_deck_id"
         private const val KEY_SKIP_TAGS = "skip_tags_csv"
         private const val KEY_TTS_RATE = "tts_rate"

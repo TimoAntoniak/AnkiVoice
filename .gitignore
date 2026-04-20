@@ -36,3 +36,7 @@ local.properties
 # Local environment secrets
 .env
 .env.local
+
+# Sherpa-ONNX JNI + Piper models (fetched by ./gradlew :app:ensureSherpaPiperAssets on first build)
+app/src/main/jniLibs/
+app/src/main/assets/tts/

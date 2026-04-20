@@ -3,6 +3,7 @@ package dev.timoa.ankivoice
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -38,7 +39,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        voice = VoiceCoordinator(this)
+        voice = VoiceCoordinator(this) { message -> Log.i("AnkiVoiceTts", message) }
         refreshPermissions()
         enableEdgeToEdge()
         setContent {
@@ -66,6 +67,7 @@ class MainActivity : ComponentActivity() {
                         SettingsScreen(
                             onBack = { nav.popBackStack() },
                             hasAnkiPermission = ankiGranted,
+                            voice = voice,
                         )
                     }
                 }

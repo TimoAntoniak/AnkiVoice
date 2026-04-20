@@ -36,7 +36,14 @@ android {
     buildFeatures {
         compose = true
     }
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
+
+apply(from = "sherpa-piper.gradle.kts")
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.10.01")

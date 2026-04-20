@@ -253,7 +253,15 @@ class StudyViewModel(
             return
         }
         val cfg = settingsRepo.load()
-        v.setSpeechRate(cfg.ttsRate)
+        v.applyVoiceSettings(cfg.language, cfg.ttsBackend, cfg.ttsRate)
+        logEvent(
+            "tts_config",
+            mapOf(
+                "backend" to cfg.ttsBackend.toStorageValue(),
+                "rate" to cfg.ttsRate.toString(),
+                "language" to cfg.language.toStorageValue(),
+            ),
+        )
         if (cfg.apiKey.isBlank()) {
             _ui.update {
                 it.copy(
