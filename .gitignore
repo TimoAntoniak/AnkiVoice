@@ -28,6 +28,7 @@ replay_pid*
 
 # Android/Gradle local and generated state
 .gradle/
+**/build/
 local.properties
 *.iml
 .idea/
