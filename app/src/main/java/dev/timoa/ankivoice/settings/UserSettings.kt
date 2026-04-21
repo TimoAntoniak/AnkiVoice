@@ -13,6 +13,8 @@ data class UserSettings(
     val skipTagsCsv: String,
     /** Text-to-speech speed multiplier. 1.0=normal, >1 faster, <1 slower. */
     val ttsRate: Float,
+    /** If enabled, include recent per-card learner attempts in tutor context. */
+    val adaptiveFeedbackHistoryEnabled: Boolean,
 ) {
     fun parsedSkipTags(): List<String> =
         skipTagsCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }

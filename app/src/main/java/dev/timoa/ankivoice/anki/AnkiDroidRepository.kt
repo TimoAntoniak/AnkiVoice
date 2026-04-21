@@ -154,6 +154,9 @@ class AnkiDroidRepository(
         return skipTags.any { wanted -> noteTags.contains(wanted) }
     }
 
+    /**
+     * Bury is a short-term defer in Anki's schedule.
+     */
     fun buryCard(noteId: Long, cardOrd: Int): Result<Unit> =
         runCatching {
             val values = ContentValues().apply {
@@ -163,6 +166,20 @@ class AnkiDroidRepository(
             }
             val updated = resolver.update(ReviewInfo.CONTENT_URI, values, null, null)
             if (updated <= 0) error("AnkiDroid did not bury the card (updated=$updated).")
+        }
+
+    /**
+     * Suspend ("Aussetzen") removes the card from normal review until manually unsuspended.
+     */
+    fun suspendCard(noteId: Long, cardOrd: Int): Result<Unit> =
+        runCatching {
+            val values = ContentValues().apply {
+                put(ReviewInfo.NOTE_ID, noteId)
+                put(ReviewInfo.CARD_ORD, cardOrd)
+                put(ReviewInfo.SUSPEND, 1)
+            }
+            val updated = resolver.update(ReviewInfo.CONTENT_URI, values, null, null)
+            if (updated <= 0) error("AnkiDroid did not suspend the card (updated=$updated).")
         }
 
     /**

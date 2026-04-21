@@ -43,6 +43,7 @@ class SecureSettingsRepository(
             studyDeckId = prefs.getLong(KEY_STUDY_DECK, AnkiDroidRepository.DECK_ID_FOLLOW_ANKI_SELECTED),
             skipTagsCsv = prefs.getString(KEY_SKIP_TAGS, "") ?: "",
             ttsRate = prefs.getFloat(KEY_TTS_RATE, DEFAULT_TTS_RATE),
+            adaptiveFeedbackHistoryEnabled = prefs.getBoolean(KEY_ADAPTIVE_FEEDBACK, false),
         )
     }
 
@@ -57,6 +58,7 @@ class SecureSettingsRepository(
             .putLong(KEY_STUDY_DECK, settings.studyDeckId)
             .putString(KEY_SKIP_TAGS, settings.skipTagsCsv)
             .putFloat(KEY_TTS_RATE, settings.ttsRate.coerceIn(0.6f, 2.0f))
+            .putBoolean(KEY_ADAPTIVE_FEEDBACK, settings.adaptiveFeedbackHistoryEnabled)
             .apply()
     }
 
@@ -71,6 +73,7 @@ class SecureSettingsRepository(
         private const val KEY_STUDY_DECK = "study_deck_id"
         private const val KEY_SKIP_TAGS = "skip_tags_csv"
         private const val KEY_TTS_RATE = "tts_rate"
+        private const val KEY_ADAPTIVE_FEEDBACK = "adaptive_feedback_history"
 
         const val DEFAULT_OPENAI_BASE = "https://api.openai.com/v1"
         const val DEFAULT_OPENAI_MODEL = "gpt-4o-mini"

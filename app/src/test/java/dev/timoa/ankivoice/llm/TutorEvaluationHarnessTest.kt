@@ -2,6 +2,7 @@ package dev.timoa.ankivoice.llm
 
 import dev.timoa.ankivoice.settings.AppLanguage
 import dev.timoa.ankivoice.settings.LlmProvider
+import dev.timoa.ankivoice.settings.TtsBackend
 import dev.timoa.ankivoice.settings.UserSettings
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -70,8 +71,8 @@ class TutorEvaluationHarnessTest {
                     ),
                 )
                 val action = result.action
+                assertTrue("terminal action should be grade_answer for case=${case.id}", action.terminalAction == TutorTerminalAction.GRADE_ANSWER)
                 assertTrue("ease out of range for case=${case.id}", (action.ease ?: -1) in 1..4)
-                assertTrue("schedule_review must be true for case=${case.id}", action.scheduleReview)
                 if ((action.ease ?: 0) <= 2) {
                     assertTrue("assistant_speech should contain correction for case=${case.id}", action.assistantSpeech.isNotBlank())
                 }
@@ -83,7 +84,7 @@ class TutorEvaluationHarnessTest {
                     ANSWER=${case.learnerAnswer}
                     RAW=${result.rawJson}
                     PARSED_EASE=${action.ease}
-                    PARSED_SCHEDULE=${action.scheduleReview}
+                    PARSED_TERMINAL=${action.terminalAction}
                     PARSED_ASSISTANT=${action.assistantSpeech}
                     ---
                     """.trimIndent(),
@@ -155,7 +156,7 @@ class TutorEvaluationHarnessTest {
         )
         assertEquals(2, calls)
         assertEquals(3, out.action.ease)
-        assertTrue(out.action.scheduleReview)
+        assertEquals(TutorTerminalAction.GRADE_ANSWER, out.action.terminalAction)
     }
 
     @Test
@@ -180,6 +181,55 @@ class TutorEvaluationHarnessTest {
             )
         }
         assertTrue("Must fail when grade_answer never arrives", result.isFailure)
+    }
+
+    @Test
+    fun suspendTerminalToolIsAccepted() = runBlocking {
+        val fake = TutorEvaluationService { _, _ ->
+            Result.success(
+                StructuredLlmTurn(
+                    assistantText = "",
+                    toolCalls = listOf(ToolCall(TOOL_SUSPEND_CARD, """{"assistant_speech":"Okay, suspended."}""")),
+                    rawOutput = "fake",
+                ),
+            )
+        }
+        val out = fake.evaluate(
+            TutorEvaluationRequest(
+                cardFront = "Q",
+                cardBack = "A",
+                learnerAnswer = "skip this",
+                settings = defaultOpenAiLikeSettings(),
+            ),
+        )
+        assertEquals(TutorTerminalAction.SUSPEND_CARD, out.action.terminalAction)
+    }
+
+    @Test
+    fun multipleTerminalToolsFailValidation() = runBlocking {
+        val fake = TutorEvaluationService { _, _ ->
+            Result.success(
+                StructuredLlmTurn(
+                    assistantText = "",
+                    toolCalls = listOf(
+                        ToolCall(TOOL_BURY_CARD, """{"assistant_speech":"bury"}"""),
+                        ToolCall(TOOL_GRADE_ANSWER, """{"assistant_speech":"","ease":3}"""),
+                    ),
+                    rawOutput = "bad",
+                ),
+            )
+        }
+        val result = runCatching {
+            fake.evaluate(
+                TutorEvaluationRequest(
+                    cardFront = "Q",
+                    cardBack = "A",
+                    learnerAnswer = "A",
+                    settings = defaultOpenAiLikeSettings(),
+                ),
+            )
+        }
+        assertTrue(result.isFailure)
     }
 
     private fun loadSettingsFromEnvOrNull(): UserSettings? {
@@ -207,9 +257,11 @@ class TutorEvaluationHarnessTest {
             apiKey = apiKey,
             baseUrl = (System.getenv("ANKIVOICE_BASE_URL") ?: defaultBase).trimEnd('/'),
             model = System.getenv("ANKIVOICE_MODEL") ?: defaultModel,
+            ttsBackend = TtsBackend.SYSTEM,
             studyDeckId = -1L,
             skipTagsCsv = "",
             ttsRate = 1.0f,
+            adaptiveFeedbackHistoryEnabled = false,
         )
     }
 
@@ -220,9 +272,11 @@ class TutorEvaluationHarnessTest {
             apiKey = "dummy",
             baseUrl = "https://example.com/v1",
             model = "fake",
+            ttsBackend = TtsBackend.SYSTEM,
             studyDeckId = -1L,
             skipTagsCsv = "",
             ttsRate = 1.0f,
+            adaptiveFeedbackHistoryEnabled = false,
         )
 
 }

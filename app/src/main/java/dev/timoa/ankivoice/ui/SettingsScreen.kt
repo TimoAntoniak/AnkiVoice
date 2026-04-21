@@ -24,6 +24,7 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -72,6 +73,7 @@ fun SettingsScreen(
     var studyDeckId by remember { mutableStateOf(AnkiDroidRepository.DECK_ID_FOLLOW_ANKI_SELECTED) }
     var skipTagsCsv by remember { mutableStateOf("") }
     var ttsRate by remember { mutableStateOf(SecureSettingsRepository.DEFAULT_TTS_RATE) }
+    var adaptiveFeedbackHistoryEnabled by remember { mutableStateOf(false) }
     var decks by remember { mutableStateOf<List<AnkiDeckSummary>>(emptyList()) }
     var saved by remember { mutableStateOf(false) }
     var showAdvanced by remember { mutableStateOf(false) }
@@ -89,6 +91,7 @@ fun SettingsScreen(
         studyDeckId = s.studyDeckId
         skipTagsCsv = s.skipTagsCsv
         ttsRate = s.ttsRate
+        adaptiveFeedbackHistoryEnabled = s.adaptiveFeedbackHistoryEnabled
     }
 
     LaunchedEffect(hasAnkiPermission) {
@@ -375,6 +378,22 @@ fun SettingsScreen(
                                 .fillMaxWidth()
                                 .padding(top = 10.dp),
                         )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("Adaptive feedback memory")
+                            Switch(
+                                checked = adaptiveFeedbackHistoryEnabled,
+                                onCheckedChange = {
+                                    adaptiveFeedbackHistoryEnabled = it
+                                    saved = false
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -393,6 +412,7 @@ fun SettingsScreen(
                                 studyDeckId = studyDeckId,
                                 skipTagsCsv = skipTagsCsv.trim(),
                                 ttsRate = ttsRate,
+                                adaptiveFeedbackHistoryEnabled = adaptiveFeedbackHistoryEnabled,
                             ),
                         )
                         saved = true

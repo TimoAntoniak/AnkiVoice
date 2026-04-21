@@ -134,18 +134,13 @@ class AnthropicClient(
     }
 
     private fun anthropicTools(): List<AnthropicTool> =
-        listOf(
+        tutorToolSpecs.map {
             AnthropicTool(
-                name = TOOL_GRADE_ANSWER,
-                description = "Finalize grading for current card with ease (1..4) and concise spoken feedback.",
-                inputSchema = tutorToolSpecs.first { it.function.name == TOOL_GRADE_ANSWER }.function.parameters,
-            ),
-            AnthropicTool(
-                name = TOOL_REREAD_CARD_FRONT,
-                description = "Request app to reread current card front.",
-                inputSchema = tutorToolSpecs.first { it.function.name == TOOL_REREAD_CARD_FRONT }.function.parameters,
-            ),
-        )
+                name = it.function.name,
+                description = it.function.description,
+                inputSchema = it.function.parameters,
+            )
+        }
 
     companion object {
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()

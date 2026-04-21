@@ -37,6 +37,12 @@ Ideas and planned work. Done items are kept briefly for history.
 - Add support for "do not read this card" semantics (e.g. image/screenshot-heavy backs), configurable via tool and/or metadata policy.
 - Keep advanced capabilities in backlog and ship incrementally, but design the tool router/state machine now so these features plug in without architecture changes.
 
+## Tutor response quality
+
+- Tighten prompt brevity further and track drift with benchmark runs (`VERSION_BENCHMARK.md`).
+- Keep responses speech-first: concise, corrective only when needed, minimal filler.
+- If prompt-only tuning plateaus, evaluate fine-tuning or a small specialized model for concise speech-safe rewrites and grading consistency.
+
 ## Parking lot
 
 - FSRS / scheduling transparency (“why this interval?”).

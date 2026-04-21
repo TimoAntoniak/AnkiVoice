@@ -5,13 +5,16 @@ import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.timoa.ankivoice.anki.AnkiCard
+import dev.timoa.ankivoice.anki.AnkiDeckSummary
 import dev.timoa.ankivoice.anki.AnkiDroidRepository
 import dev.timoa.ankivoice.llm.ChatMessage
+import dev.timoa.ankivoice.llm.TutorTerminalAction
 import dev.timoa.ankivoice.llm.LlmCompletionGateway
 import dev.timoa.ankivoice.llm.TutorBrain
 import dev.timoa.ankivoice.llm.TutorAction
 import dev.timoa.ankivoice.llm.TutorEvaluationRequest
 import dev.timoa.ankivoice.llm.TutorEvaluationService
+import dev.timoa.ankivoice.metadata.CardOverlayRepository
 import dev.timoa.ankivoice.settings.SecureSettingsRepository
 import dev.timoa.ankivoice.settings.UserSettings
 import dev.timoa.ankivoice.voice.VoiceCoordinator
@@ -24,8 +27,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -69,6 +70,7 @@ class StudyViewModel(
 ) : AndroidViewModel(application) {
     private val anki = AnkiDroidRepository(application)
     private val settingsRepo = SecureSettingsRepository(application)
+    private val overlayRepo = CardOverlayRepository(application)
     private val llm = LlmCompletionGateway()
     private val tutorEvaluation = TutorEvaluationService(llm)
 
@@ -80,9 +82,9 @@ class StudyViewModel(
     private val conversation: MutableList<ChatMessage> = mutableListOf()
     private val diagnosticEvents: MutableList<DiagnosticEvent> = mutableListOf()
     private val sessionId: String = UUID.randomUUID().toString()
-    private val json = Json { prettyPrint = true }
 
     private var studyJob: Job? = null
+    private var pendingDeckSuggestion: PendingDeckSuggestion? = null
 
     fun bindVoice(coordinator: VoiceCoordinator) {
         voice = coordinator
@@ -155,7 +157,7 @@ class StudyViewModel(
                         transcript = heard,
                         lastTutorLine = result.action.assistantSpeech,
                         lastRawModelOutput = result.rawJson,
-                        lastParsedActionJson = json.encodeToString(result.action),
+                        lastParsedActionJson = result.action.toString(),
                     )
                 }
                 logEvent(
@@ -441,32 +443,98 @@ class StudyViewModel(
                 if (!_ui.value.sessionRunning) return
 
                 val action = result.action
+                overlayRepo.applyWrites(
+                    noteId = card.noteId,
+                    cardOrd = card.cardOrd,
+                    writes = action.metadataWrites,
+                    learnerAnswerToAppend = heard,
+                    adaptiveHistoryEnabled = cfg.adaptiveFeedbackHistoryEnabled,
+                )
 
                 _ui.update { it.copy(lastTutorLine = action.assistantSpeech, phase = StudyPhase.SpeakingTutor) }
+                val extraSpeech = buildString {
+                    if (action.wantsDeckList) {
+                        append(deckListSpeech(cfg))
+                    }
+                    if (action.wantsDeckSuggestion) {
+                        val suggestion = suggestDeck(action.deckSuggestionPreference.orEmpty())
+                        if (suggestion != null) {
+                            pendingDeckSuggestion = PendingDeckSuggestion(
+                                deckId = suggestion.deckId,
+                                spokenReason = suggestion.reason,
+                                createdAtMs = System.currentTimeMillis(),
+                            )
+                            if (isNotEmpty()) append(" ")
+                            append(suggestion.reason)
+                        }
+                    }
+                }.trim()
                 if (action.assistantSpeech.isNotBlank()) {
                     v.speak(action.assistantSpeech)
                 }
+                if (extraSpeech.isNotBlank()) {
+                    v.speak(extraSpeech)
+                }
+                if (action.rereadCardFront) {
+                    v.speak(localized(cfg, "here_is_card", card.questionSpeech))
+                }
                 if (!_ui.value.sessionRunning) return
 
-                val modelEase = action.ease?.takeIf { it in 1..4 } ?: 1
-                val maxAllowedEase = card.reviewButtonCount.coerceIn(1, 4)
-                val ease = modelEase.coerceIn(1, maxAllowedEase)
-                _ui.update { it.copy(phase = StudyPhase.Scheduling) }
-                val elapsed = System.currentTimeMillis() - cardStart
-                withContext(Dispatchers.IO) {
-                    anki.scheduleAnswer(card.noteId, card.cardOrd, ease, elapsed)
-                        .getOrElse { throw it }
+                when (action.terminalAction) {
+                    TutorTerminalAction.GRADE_ANSWER -> {
+                        val modelEase = action.ease?.takeIf { it in 1..4 } ?: 1
+                        val maxAllowedEase = card.reviewButtonCount.coerceIn(1, 4)
+                        val ease = modelEase.coerceIn(1, maxAllowedEase)
+                        _ui.update { it.copy(phase = StudyPhase.Scheduling) }
+                        val elapsed = System.currentTimeMillis() - cardStart
+                        withContext(Dispatchers.IO) {
+                            anki.scheduleAnswer(card.noteId, card.cardOrd, ease, elapsed)
+                                .getOrElse { throw it }
+                        }
+                        logEvent(
+                            "schedule_review",
+                            mapOf(
+                                "ease" to ease.toString(),
+                                "elapsed_ms" to elapsed.toString(),
+                            ),
+                        )
+                        scheduledThisCard = true
+                        v.playGradeCue(ease)
+                        break
+                    }
+                    TutorTerminalAction.SUSPEND_CARD -> {
+                        _ui.update { it.copy(phase = StudyPhase.Scheduling) }
+                        withContext(Dispatchers.IO) {
+                            anki.suspendCard(card.noteId, card.cardOrd).getOrElse { throw it }
+                        }
+                        logEvent("suspend_card", mapOf("note_id" to card.noteId.toString(), "ord" to card.cardOrd.toString()))
+                        scheduledThisCard = true
+                        break
+                    }
+                    TutorTerminalAction.BURY_CARD -> {
+                        _ui.update { it.copy(phase = StudyPhase.Scheduling) }
+                        withContext(Dispatchers.IO) {
+                            anki.buryCard(card.noteId, card.cardOrd).getOrElse { throw it }
+                        }
+                        logEvent("bury_card", mapOf("note_id" to card.noteId.toString(), "ord" to card.cardOrd.toString()))
+                        scheduledThisCard = true
+                        break
+                    }
+                    TutorTerminalAction.SWITCH_DECK -> {
+                        _ui.update { it.copy(phase = StudyPhase.Scheduling) }
+                        val switched = withContext(Dispatchers.IO) {
+                            switchDeckFromAction(action, cfg)
+                        }
+                        if (!switched) {
+                            _ui.update { it.copy(phase = StudyPhase.SpeakingTutor) }
+                            v.speak(localized(cfg, "deck_not_found"))
+                        } else {
+                            v.speak(localized(cfg, "deck_switched"))
+                        }
+                        scheduledThisCard = true
+                        break
+                    }
                 }
-                logEvent(
-                    "schedule_review",
-                    mapOf(
-                        "ease" to ease.toString(),
-                        "elapsed_ms" to elapsed.toString(),
-                    ),
-                )
-                scheduledThisCard = true
-                v.playGradeCue(ease)
-                break
             }
 
             if (!scheduledThisCard && turn >= TutorBrain.MAX_TURNS_PER_CARD && _ui.value.sessionRunning) {
@@ -488,6 +556,62 @@ class StudyViewModel(
             else -> cfg.studyDeckId
         }
 
+    private fun deckListSpeech(cfg: UserSettings): String {
+        val decks = anki.queryDeckSummaries()
+            .filter { it.dueForVoice > 0 }
+            .sortedByDescending { it.dueForVoice }
+            .take(3)
+        if (decks.isEmpty()) {
+            return localized(cfg, "no_decks_due")
+        }
+        return decks.joinToString(
+            separator = " ",
+            prefix = localized(cfg, "decks_left_prefix"),
+        ) { "${it.fullName} (${it.dueForVoice})" }
+    }
+
+    private fun suggestDeck(preference: String): DeckSuggestion? {
+        val decks = anki.queryDeckSummaries().filter { it.dueForVoice > 0 }
+        if (decks.isEmpty()) return null
+        val pref = preference.lowercase(Locale.ROOT)
+        val filtered = if (pref.contains("not ") || pref.contains("nicht")) {
+            decks.filterNot { pref.split(" ").any { token -> token.length > 2 && it.fullName.lowercase(Locale.ROOT).contains(token) } }
+        } else {
+            decks
+        }
+        val target = (filtered.ifEmpty { decks }).maxByOrNull { it.dueForVoice } ?: return null
+        return DeckSuggestion(target.deckId, "Suggested: ${target.fullName}, ${target.dueForVoice} due.")
+    }
+
+    private fun switchDeckFromAction(action: TutorAction, cfg: UserSettings): Boolean {
+        val all = anki.queryDeckSummaries()
+        val pending = pendingDeckSuggestion?.takeIf { System.currentTimeMillis() - it.createdAtMs <= 120_000 }
+        val deckId = action.switchDeckId
+            ?: if (action.deckQuery.orEmpty().lowercase(Locale.ROOT) in setOf("yes", "do it", "sounds good") && pending != null) pending.deckId else null
+            ?: resolveDeckByQuery(action.deckQuery, all)
+            ?: return false
+        pendingDeckSuggestion = null
+        settingsRepo.save(cfg.copy(studyDeckId = deckId))
+        anki.setAnkiSelectedDeckId(deckId)
+        return true
+    }
+
+    private fun resolveDeckByQuery(query: String?, decks: List<AnkiDeckSummary>): Long? {
+        val q = query?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        if (q.isBlank()) return null
+        val exact = decks.firstOrNull { it.fullName.lowercase(Locale.ROOT) == q }?.deckId
+        if (exact != null) return exact
+        return decks.firstOrNull { it.fullName.lowercase(Locale.ROOT).contains(q) }?.deckId
+    }
+
+    private fun buildDeckSnapshot(): String {
+        val rows = anki.queryDeckSummaries()
+            .sortedByDescending { it.dueForVoice }
+            .take(8)
+            .joinToString(" | ") { "${it.deckId}:${it.fullName}:${it.dueForVoice}" }
+        return rows
+    }
+
     private suspend fun runTutorRound(
         card: AnkiCard,
         cfg: UserSettings,
@@ -495,14 +619,31 @@ class StudyViewModel(
         source: String,
     ): TutorRoundResult {
         logEvent("user_input", mapOf("source" to source, "text" to heard))
+        val overlay = overlayRepo.load(card.noteId, card.cardOrd)
+        val deckSnapshot = withContext(Dispatchers.IO) { buildDeckSnapshot() }
 
         val evalResult = withContext(Dispatchers.IO) {
             tutorEvaluation.evaluate(
                 TutorEvaluationRequest(
-                    cardFront = card.questionSpeech,
-                    cardBack = card.answerSpeech,
+                    cardFront = overlay.speechVerbalizationFront.ifBlank { card.questionSpeech },
+                    cardBack = overlay.speechVerbalizationBack.ifBlank { card.answerSpeech },
                     learnerAnswer = heard,
                     settings = cfg,
+                    cardTutorInstructions = overlay.tutorInstructions,
+                    cardSpeechVerbalization =
+                        buildString {
+                            if (overlay.speechVerbalizationFront.isNotBlank()) {
+                                append("front=")
+                                append(overlay.speechVerbalizationFront)
+                            }
+                            if (overlay.speechVerbalizationBack.isNotBlank()) {
+                                if (isNotEmpty()) append(" | ")
+                                append("back=")
+                                append(overlay.speechVerbalizationBack)
+                            }
+                        },
+                    recentLearnerResponses = if (cfg.adaptiveFeedbackHistoryEnabled) overlay.recentLearnerResponses else emptyList(),
+                    deckSnapshot = deckSnapshot,
                 ),
             )
         }
@@ -521,16 +662,17 @@ class StudyViewModel(
         _ui.update {
             it.copy(
                 lastRawModelOutput = rawJson,
-                lastParsedActionJson = json.encodeToString(action),
+                lastParsedActionJson = action.toString(),
             )
         }
         logEvent(
             "action_validated",
             mapOf(
                 "assistant_speech" to action.assistantSpeech,
+                "terminal_action" to action.terminalAction.name,
                 "ease" to (action.ease ?: -1).toString(),
-                "continue_conversation" to action.continueConversation.toString(),
-                "schedule_review" to action.scheduleReview.toString(),
+                "wants_deck_list" to action.wantsDeckList.toString(),
+                "wants_deck_suggestion" to action.wantsDeckSuggestion.toString(),
             ),
         )
         return TutorRoundResult(rawJson = rawJson, action = action)
@@ -588,6 +730,10 @@ class StudyViewModel(
                     "did_not_hear" -> "Ich habe nichts gehoert. Bitte nochmal."
                     "fallback_good" -> "Ich bewerte das als Gut und gehe weiter."
                     "grade_failed_retry" -> "Ich konnte die Bewertung nicht abschliessen. Lass es uns mit derselben Karte nochmal versuchen."
+                    "deck_not_found" -> "Ich konnte das Deck nicht zuordnen."
+                    "deck_switched" -> "Deck gewechselt."
+                    "no_decks_due" -> "Es gibt aktuell keine faelligen Decks."
+                    "decks_left_prefix" -> "Faellige Decks: "
                     else -> key
                 }
             else ->
@@ -597,6 +743,10 @@ class StudyViewModel(
                     "did_not_hear" -> "I didn't hear anything. Try again."
                     "fallback_good" -> "I'll mark this Good and move on."
                     "grade_failed_retry" -> "I could not complete grading. Let's retry the same card."
+                    "deck_not_found" -> "I could not map that to a deck."
+                    "deck_switched" -> "Switched deck."
+                    "no_decks_due" -> "There are no due decks right now."
+                    "decks_left_prefix" -> "Decks left: "
                     else -> key
                 }
         }
@@ -635,4 +785,15 @@ private data class DiagnosticEvent(
 private data class TutorRoundResult(
     val rawJson: String,
     val action: TutorAction,
+)
+
+private data class DeckSuggestion(
+    val deckId: Long,
+    val reason: String,
+)
+
+private data class PendingDeckSuggestion(
+    val deckId: Long,
+    val spokenReason: String,
+    val createdAtMs: Long,
 )
