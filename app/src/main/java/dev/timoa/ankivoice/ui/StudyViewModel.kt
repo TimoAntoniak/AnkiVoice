@@ -10,10 +10,19 @@ import dev.timoa.ankivoice.anki.AnkiDroidRepository
 import dev.timoa.ankivoice.llm.ChatMessage
 import dev.timoa.ankivoice.llm.TutorTerminalAction
 import dev.timoa.ankivoice.llm.LlmCompletionGateway
+import dev.timoa.ankivoice.llm.TOOL_BURY_CARD
 import dev.timoa.ankivoice.llm.TutorBrain
 import dev.timoa.ankivoice.llm.TutorAction
 import dev.timoa.ankivoice.llm.TutorEvaluationRequest
 import dev.timoa.ankivoice.llm.TutorEvaluationService
+import dev.timoa.ankivoice.llm.TOOL_GRADE_ANSWER
+import dev.timoa.ankivoice.llm.TOOL_LIST_DECKS
+import dev.timoa.ankivoice.llm.TOOL_REREAD_CARD_FRONT
+import dev.timoa.ankivoice.llm.TOOL_SET_CARD_TUTOR_INSTRUCTIONS
+import dev.timoa.ankivoice.llm.TOOL_SET_SPEECH_VERBALIZATION
+import dev.timoa.ankivoice.llm.TOOL_SUGGEST_NEXT_DECK
+import dev.timoa.ankivoice.llm.TOOL_SUSPEND_CARD
+import dev.timoa.ankivoice.llm.TOOL_SWITCH_DECK
 import dev.timoa.ankivoice.metadata.CardOverlayRepository
 import dev.timoa.ankivoice.settings.SecureSettingsRepository
 import dev.timoa.ankivoice.settings.UserSettings
@@ -63,6 +72,7 @@ data class StudyUiState(
     val lastRawModelOutput: String? = null,
     val lastParsedActionJson: String? = null,
     val diagnosticsCount: Int = 0,
+    val timeline: List<ChatTimelineEntry> = emptyList(),
 )
 
 class StudyViewModel(
@@ -285,6 +295,7 @@ class StudyViewModel(
                     lastParsedActionJson = null,
                 )
             }
+            appendTimeline(TimelineRole.APP, "Study session started.")
             try {
                 studyLoop(v, cfg)
             } catch (e: CancellationException) {
@@ -311,10 +322,78 @@ class StudyViewModel(
         }
     }
 
+    fun startChatSession(
+        hasMicPermission: Boolean,
+        hasAnkiPermission: Boolean,
+    ) {
+        if (_ui.value.sessionRunning) return
+        val v = voice ?: return
+        if (!anki.isAnkiDroidInstalled()) {
+            _ui.update {
+                it.copy(
+                    phase = StudyPhase.NoAnkiDroid,
+                    troubleshooting = TROUBLE_NO_ANKI,
+                )
+            }
+            return
+        }
+        if (!hasMicPermission) {
+            _ui.update { it.copy(phase = StudyPhase.NeedMicPermission) }
+            return
+        }
+        if (!hasAnkiPermission) {
+            _ui.update { it.copy(phase = StudyPhase.NeedAnkiPermission) }
+            return
+        }
+        val cfg = settingsRepo.load()
+        v.applyVoiceSettings(cfg.language, cfg.ttsBackend, cfg.ttsRate)
+        if (cfg.apiKey.isBlank()) {
+            _ui.update {
+                it.copy(
+                    phase = StudyPhase.MissingApiKey,
+                    troubleshooting = TROUBLE_NO_KEY,
+                )
+            }
+            return
+        }
+
+        studyJob?.cancel()
+        studyJob = viewModelScope.launch {
+            _ui.update {
+                it.copy(
+                    sessionRunning = true,
+                    errorMessage = null,
+                    troubleshooting = TROUBLE_GENERIC,
+                    lastRawModelOutput = null,
+                    lastParsedActionJson = null,
+                    phase = StudyPhase.SpeakingTutor,
+                )
+            }
+            try {
+                v.speak(localized(cfg, "chat_mode_intro"))
+                chatBootstrapLoop(v, cfg)
+            } catch (e: CancellationException) {
+                _ui.update { it.copy(sessionRunning = false, phase = StudyPhase.Idle) }
+                throw e
+            } catch (e: Exception) {
+                _ui.update {
+                    it.copy(
+                        phase = StudyPhase.Error,
+                        errorMessage = e.message ?: e.toString(),
+                        sessionRunning = false,
+                    )
+                }
+            } finally {
+                studyJob = null
+            }
+        }
+    }
+
     fun stopSession() {
         studyJob?.cancel()
         studyJob = null
         logEvent("session_stopped", mapOf("reason" to "manual_stop"))
+        appendTimeline(TimelineRole.APP, "Session stopped.")
         _ui.update { it.copy(sessionRunning = false, phase = StudyPhase.Idle) }
     }
 
@@ -378,6 +457,10 @@ class StudyViewModel(
                     "deck_id" to deckId.toString(),
                 ),
             )
+            appendTimeline(
+                TimelineRole.APP,
+                "Card prompt: ${card.questionSpeech}",
+            )
             var turn = 0
             val cardStart = System.currentTimeMillis()
             _ui.update {
@@ -420,6 +503,7 @@ class StudyViewModel(
                     continue
                 }
                 _ui.update { it.copy(transcript = heard, phase = StudyPhase.Thinking) }
+                appendTimeline(TimelineRole.USER, heard)
                 val result = try {
                     runTutorRound(card, cfg, heard, "voice_session")
                 } catch (e: Exception) {
@@ -443,6 +527,11 @@ class StudyViewModel(
                 if (!_ui.value.sessionRunning) return
 
                 val action = result.action
+                appendTimeline(
+                    TimelineRole.MODEL,
+                    if (action.assistantSpeech.isBlank()) "(No spoken feedback)" else action.assistantSpeech,
+                )
+                appendTimeline(TimelineRole.TOOL, "Tools: ${describeActionTools(action)}")
                 overlayRepo.applyWrites(
                     noteId = card.noteId,
                     cardOrd = card.cardOrd,
@@ -454,7 +543,9 @@ class StudyViewModel(
                 _ui.update { it.copy(lastTutorLine = action.assistantSpeech, phase = StudyPhase.SpeakingTutor) }
                 val extraSpeech = buildString {
                     if (action.wantsDeckList) {
-                        append(deckListSpeech(cfg))
+                        val decks = deckListSpeech(cfg)
+                        append(decks)
+                        appendTimeline(TimelineRole.TOOL, "list_decks -> $decks")
                     }
                     if (action.wantsDeckSuggestion) {
                         val suggestion = suggestDeck(action.deckSuggestionPreference.orEmpty())
@@ -466,6 +557,7 @@ class StudyViewModel(
                             )
                             if (isNotEmpty()) append(" ")
                             append(suggestion.reason)
+                            appendTimeline(TimelineRole.TOOL, "suggest_next_deck -> ${suggestion.reason}")
                         }
                     }
                 }.trim()
@@ -498,6 +590,7 @@ class StudyViewModel(
                                 "elapsed_ms" to elapsed.toString(),
                             ),
                         )
+                        appendTimeline(TimelineRole.TOOL, "grade_answer -> scheduled ease=$ease")
                         scheduledThisCard = true
                         v.playGradeCue(ease)
                         break
@@ -507,6 +600,7 @@ class StudyViewModel(
                         withContext(Dispatchers.IO) {
                             anki.suspendCard(card.noteId, card.cardOrd).getOrElse { throw it }
                         }
+                        appendTimeline(TimelineRole.TOOL, "suspend_card -> suspended current card")
                         logEvent("suspend_card", mapOf("note_id" to card.noteId.toString(), "ord" to card.cardOrd.toString()))
                         scheduledThisCard = true
                         break
@@ -516,6 +610,7 @@ class StudyViewModel(
                         withContext(Dispatchers.IO) {
                             anki.buryCard(card.noteId, card.cardOrd).getOrElse { throw it }
                         }
+                        appendTimeline(TimelineRole.TOOL, "bury_card -> buried current card")
                         logEvent("bury_card", mapOf("note_id" to card.noteId.toString(), "ord" to card.cardOrd.toString()))
                         scheduledThisCard = true
                         break
@@ -526,9 +621,11 @@ class StudyViewModel(
                             switchDeckFromAction(action, cfg)
                         }
                         if (!switched) {
+                            appendTimeline(TimelineRole.TOOL, "switch_deck -> failed to resolve target")
                             _ui.update { it.copy(phase = StudyPhase.SpeakingTutor) }
                             v.speak(localized(cfg, "deck_not_found"))
                         } else {
+                            appendTimeline(TimelineRole.TOOL, "switch_deck -> deck changed")
                             v.speak(localized(cfg, "deck_switched"))
                         }
                         scheduledThisCard = true
@@ -548,6 +645,100 @@ class StudyViewModel(
                 if (!_ui.value.sessionRunning) return
             }
         }
+    }
+
+    private suspend fun chatBootstrapLoop(v: VoiceCoordinator, cfg: UserSettings) {
+        val bootstrapCard = AnkiCard(
+            noteId = -9999L,
+            cardOrd = 0,
+            questionHtml = "Deck navigation chat",
+            answerHtml = "Use tools to list, suggest, and switch deck.",
+        )
+        while (_ui.value.sessionRunning) {
+            _ui.update { it.copy(phase = StudyPhase.Listening) }
+            val heard = try {
+                v.listen()
+            } catch (_: Exception) {
+                v.speak(localized(cfg, "did_not_catch"))
+                continue
+            }
+            if (heard.isBlank()) {
+                v.speak(localized(cfg, "did_not_hear"))
+                continue
+            }
+            appendTimeline(TimelineRole.USER, heard)
+            _ui.update { it.copy(transcript = heard, phase = StudyPhase.Thinking) }
+            val result = runTutorRound(bootstrapCard, cfg, heard, "chat_bootstrap")
+            val action = result.action
+            appendTimeline(
+                TimelineRole.MODEL,
+                if (action.assistantSpeech.isBlank()) "(No spoken feedback)" else action.assistantSpeech,
+            )
+            appendTimeline(TimelineRole.TOOL, "Tools: ${describeActionTools(action)}")
+            _ui.update { it.copy(lastTutorLine = action.assistantSpeech, phase = StudyPhase.SpeakingTutor) }
+            if (action.assistantSpeech.isNotBlank()) v.speak(action.assistantSpeech)
+            if (action.wantsDeckList) {
+                val decks = deckListSpeech(cfg)
+                appendTimeline(TimelineRole.TOOL, "list_decks -> $decks")
+                v.speak(decks)
+            }
+            if (action.wantsDeckSuggestion) {
+                val suggestion = suggestDeck(action.deckSuggestionPreference.orEmpty())
+                if (suggestion != null) {
+                    pendingDeckSuggestion = PendingDeckSuggestion(
+                        deckId = suggestion.deckId,
+                        spokenReason = suggestion.reason,
+                        createdAtMs = System.currentTimeMillis(),
+                    )
+                    appendTimeline(TimelineRole.TOOL, "suggest_next_deck -> ${suggestion.reason}")
+                    v.speak(suggestion.reason)
+                }
+            }
+            if (action.terminalAction == TutorTerminalAction.SWITCH_DECK) {
+                val switched = withContext(Dispatchers.IO) { switchDeckFromAction(action, cfg) }
+                if (switched) {
+                    appendTimeline(TimelineRole.TOOL, "switch_deck -> deck changed, entering study loop")
+                    v.speak(localized(cfg, "deck_switched"))
+                    val nextCfg = settingsRepo.load()
+                    studyLoop(v, nextCfg)
+                    return
+                }
+                appendTimeline(TimelineRole.TOOL, "switch_deck -> failed to resolve target")
+                v.speak(localized(cfg, "deck_not_found"))
+            }
+        }
+    }
+
+    private fun appendTimeline(role: TimelineRole, message: String) {
+        val text = message.trim()
+        if (text.isBlank()) return
+        _ui.update {
+            it.copy(
+                timeline = (it.timeline + ChatTimelineEntry(isoNow(), role, text)).takeLast(300),
+            )
+        }
+    }
+
+    private fun describeActionTools(action: TutorAction): String {
+        val parts = mutableListOf<String>()
+        if (action.rereadCardFront) parts.add(TOOL_REREAD_CARD_FRONT)
+        if (action.wantsDeckList) parts.add(TOOL_LIST_DECKS)
+        if (action.wantsDeckSuggestion) parts.add(TOOL_SUGGEST_NEXT_DECK)
+        action.metadataWrites.forEach {
+            when (it) {
+                is dev.timoa.ankivoice.llm.CardMetadataWrite.TutorInstruction -> parts.add(TOOL_SET_CARD_TUTOR_INSTRUCTIONS)
+                is dev.timoa.ankivoice.llm.CardMetadataWrite.SpeechVerbalization -> parts.add(TOOL_SET_SPEECH_VERBALIZATION)
+            }
+        }
+        parts.add(
+            when (action.terminalAction) {
+                TutorTerminalAction.GRADE_ANSWER -> TOOL_GRADE_ANSWER
+                TutorTerminalAction.SUSPEND_CARD -> TOOL_SUSPEND_CARD
+                TutorTerminalAction.BURY_CARD -> TOOL_BURY_CARD
+                TutorTerminalAction.SWITCH_DECK -> TOOL_SWITCH_DECK
+            },
+        )
+        return if (parts.isEmpty()) "(none)" else parts.joinToString(", ")
     }
 
     private fun resolveDeckIdOrNull(cfg: UserSettings): Long? =
@@ -732,6 +923,7 @@ class StudyViewModel(
                     "grade_failed_retry" -> "Ich konnte die Bewertung nicht abschliessen. Lass es uns mit derselben Karte nochmal versuchen."
                     "deck_not_found" -> "Ich konnte das Deck nicht zuordnen."
                     "deck_switched" -> "Deck gewechselt."
+                    "chat_mode_intro" -> "Chat gestartet. Sag zum Beispiel: Waehle ein Deck fuer mich."
                     "no_decks_due" -> "Es gibt aktuell keine faelligen Decks."
                     "decks_left_prefix" -> "Faellige Decks: "
                     else -> key
@@ -745,6 +937,7 @@ class StudyViewModel(
                     "grade_failed_retry" -> "I could not complete grading. Let's retry the same card."
                     "deck_not_found" -> "I could not map that to a deck."
                     "deck_switched" -> "Switched deck."
+                    "chat_mode_intro" -> "Chat started. Say for example: choose a deck for me."
                     "no_decks_due" -> "There are no due decks right now."
                     "decks_left_prefix" -> "Decks left: "
                     else -> key
@@ -796,4 +989,17 @@ private data class PendingDeckSuggestion(
     val deckId: Long,
     val spokenReason: String,
     val createdAtMs: Long,
+)
+
+enum class TimelineRole {
+    USER,
+    APP,
+    MODEL,
+    TOOL,
+}
+
+data class ChatTimelineEntry(
+    val tsIso: String,
+    val role: TimelineRole,
+    val text: String,
 )

@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ButtonDefaults
@@ -17,6 +19,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -34,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -50,6 +54,7 @@ fun StudyScreen(
     val context = LocalContext.current
     var showAdvanced by remember { mutableStateOf(false) }
     var showDiagnostics by remember { mutableStateOf(false) }
+    var showTimeline by remember { mutableStateOf(false) }
 
     LaunchedEffect(hasAnkiPermission) {
         if (hasAnkiPermission) {
@@ -99,26 +104,58 @@ fun StudyScreen(
             }
 
             Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Button(
-                    onClick = { viewModel.startSession(hasMicPermission, hasAnkiPermission) },
-                    enabled = !state.sessionRunning,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("Start")
-                }
-                OutlinedButton(
-                    onClick = { viewModel.stopSession() },
-                    enabled = state.sessionRunning,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("Stop")
-                }
+                FilterChip(
+                    selected = !showTimeline,
+                    onClick = { showTimeline = false },
+                    label = { Text("Study") },
+                )
+                FilterChip(
+                    selected = showTimeline,
+                    onClick = { showTimeline = true },
+                    label = { Text("Chat timeline") },
+                )
             }
 
-            when (state.phase) {
+            if (showTimeline) {
+                TimelinePanel(entries = state.timeline)
+            } else {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Button(
+                        onClick = { viewModel.startSession(hasMicPermission, hasAnkiPermission) },
+                        enabled = !state.sessionRunning,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Start")
+                    }
+                    OutlinedButton(
+                        onClick = { viewModel.startChatSession(hasMicPermission, hasAnkiPermission) },
+                        enabled = !state.sessionRunning,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Start chat")
+                    }
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    OutlinedButton(
+                        onClick = { viewModel.stopSession() },
+                        enabled = state.sessionRunning,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Stop")
+                    }
+                }
+
+                when (state.phase) {
                 StudyPhase.NeedMicPermission -> {
                     InlineNotice("Microphone permission is required.")
                     Button(onClick = onRequestMic, modifier = Modifier.fillMaxWidth()) { Text("Grant microphone") }
@@ -138,14 +175,14 @@ fun StudyScreen(
                     InlineNotice("No due cards in the current deck.")
                 }
                 else -> {}
-            }
+                }
 
-            Card(
+                Card(
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
                 ),
                 modifier = Modifier.fillMaxWidth(),
-            ) {
+                ) {
                 Column(
                     modifier = Modifier.padding(14.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -160,14 +197,14 @@ fun StudyScreen(
                         Text("Turn ${state.turnOnCard}", style = MaterialTheme.typography.labelMedium)
                     }
                 }
-            }
-
-            if (hasAnkiPermission) {
-                TextButton(onClick = { viewModel.refreshDeckStatus(true) }) {
-                    Text("Refresh deck status")
                 }
-            }
-            state.errorMessage?.let {
+
+                if (hasAnkiPermission) {
+                    TextButton(onClick = { viewModel.refreshDeckStatus(true) }) {
+                        Text("Refresh deck status")
+                    }
+                }
+                state.errorMessage?.let {
                 Card(
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.errorContainer,
@@ -185,9 +222,9 @@ fun StudyScreen(
                         }
                     }
                 }
-            }
+                }
 
-            Column(
+                Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(
@@ -197,7 +234,7 @@ fun StudyScreen(
                     .clickable { showAdvanced = !showAdvanced }
                     .padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
+                ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -232,9 +269,9 @@ fun StudyScreen(
                         Text("Run simulation")
                     }
                 }
-            }
+                }
 
-            Column(
+                Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(
@@ -244,7 +281,7 @@ fun StudyScreen(
                     .clickable { showDiagnostics = !showDiagnostics }
                     .padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
+                ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -270,6 +307,7 @@ fun StudyScreen(
                         }
                     }
                 }
+                }
             }
         }
     }
@@ -289,4 +327,47 @@ private fun InlineNotice(text: String) {
             )
             .padding(horizontal = 12.dp, vertical = 10.dp),
     )
+}
+
+@Composable
+private fun TimelinePanel(entries: List<ChatTimelineEntry>) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+        ),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("Chronological chat log", style = MaterialTheme.typography.titleSmall)
+            if (entries.isEmpty()) {
+                Text("No events yet. Start chat or study to populate the timeline.")
+            } else {
+                entries.forEach { entry ->
+                    val (label, bg) = when (entry.role) {
+                        TimelineRole.USER -> "You" to MaterialTheme.colorScheme.primaryContainer
+                        TimelineRole.APP -> "App" to MaterialTheme.colorScheme.secondaryContainer
+                        TimelineRole.MODEL -> "AI" to MaterialTheme.colorScheme.tertiaryContainer
+                        TimelineRole.TOOL -> "Tool" to MaterialTheme.colorScheme.surfaceContainerHighest
+                    }
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = bg),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                "$label • ${entry.tsIso}",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(entry.text, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(2.dp))
+            }
+        }
+    }
 }
