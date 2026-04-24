@@ -11,6 +11,7 @@ data class TutorEvaluationRequest(
     val cardSpeechVerbalization: String = "",
     val recentLearnerResponses: List<String> = emptyList(),
     val deckSnapshot: String = "",
+    val requireTerminalTool: Boolean = true,
 )
 
 data class TutorEvaluationResult(
@@ -45,6 +46,7 @@ class TutorEvaluationService(
                     cardSpeechVerbalization = request.cardSpeechVerbalization,
                     recentLearnerResponses = request.recentLearnerResponses,
                     deckSnapshot = request.deckSnapshot,
+                    requireTerminalTool = request.requireTerminalTool,
                 ),
             ),
             ChatMessage("user", request.learnerAnswer),
@@ -164,8 +166,34 @@ class TutorEvaluationService(
                 )
             }
 
+            if (!request.requireTerminalTool) {
+                val action = TutorAction(
+                    assistantSpeech = turn.assistantText,
+                    rereadCardFront = turn.toolCalls.any { it.name == TOOL_REREAD_CARD_FRONT },
+                    terminalAction = TutorTerminalAction.NONE,
+                    wantsDeckList = wantsDeckList,
+                    wantsDeckSuggestion = wantsDeckSuggestion,
+                    deckSuggestionPreference = deckSuggestionPreference,
+                    metadataWrites = metadataWrites.filter {
+                        when (it) {
+                            is CardMetadataWrite.TutorInstruction -> it.text.isNotBlank()
+                            is CardMetadataWrite.SpeechVerbalization -> it.text.isNotBlank()
+                        }
+                    },
+                )
+                validateTutorAction(action)
+                if (action.assistantSpeech.isNotBlank()) {
+                    conversation.add(ChatMessage("assistant", action.assistantSpeech))
+                }
+                return TutorEvaluationResult(
+                    conversation = conversation,
+                    rawJson = rawOutputs.joinToString("\n---\n"),
+                    action = action,
+                )
+            }
+
             if (retry >= 1) {
-                throw IllegalStateException("Model did not call grade_answer after retry")
+                throw IllegalStateException("Model did not call a terminal tool after retry")
             }
             retry++
             conversation.add(

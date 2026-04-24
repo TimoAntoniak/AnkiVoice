@@ -120,7 +120,10 @@ fun StudyScreen(
             }
 
             if (showTimeline) {
-                TimelinePanel(entries = state.timeline)
+                TimelinePanel(
+                    entries = state.timeline,
+                    onClear = viewModel::clearTimeline,
+                )
             } else {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -330,7 +333,10 @@ private fun InlineNotice(text: String) {
 }
 
 @Composable
-private fun TimelinePanel(entries: List<ChatTimelineEntry>) {
+private fun TimelinePanel(
+    entries: List<ChatTimelineEntry>,
+    onClear: () -> Unit,
+) {
     Card(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
@@ -341,7 +347,16 @@ private fun TimelinePanel(entries: List<ChatTimelineEntry>) {
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text("Chronological chat log", style = MaterialTheme.typography.titleSmall)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Chronological chat log", style = MaterialTheme.typography.titleSmall)
+                TextButton(onClick = onClear, enabled = entries.isNotEmpty()) {
+                    Text("Clear")
+                }
+            }
             if (entries.isEmpty()) {
                 Text("No events yet. Start chat or study to populate the timeline.")
             } else {

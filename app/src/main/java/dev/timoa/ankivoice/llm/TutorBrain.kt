@@ -17,6 +17,7 @@ object TutorBrain {
         cardSpeechVerbalization: String,
         recentLearnerResponses: List<String>,
         deckSnapshot: String,
+        requireTerminalTool: Boolean = true,
     ): String =
         """
         You are grading one spoken Anki answer.
@@ -34,7 +35,7 @@ object TutorBrain {
         - THIS IS A VOICE-ONLY TUTOR. WRITE FOR TTS, NOT FOR TEXT UI.
         - Keep text concise and practical.
         - You may call reread_card_front if the learner asks to hear the prompt again.
-        - Every response must finish with exactly one terminal tool: grade_answer OR suspend_card OR bury_card OR switch_deck.
+        - ${if (requireTerminalTool) "Every response must finish with exactly one terminal tool: grade_answer OR suspend_card OR bury_card OR switch_deck." else "Terminal tools are optional in this chat mode; use one only if the user explicitly asks for grade/suspend/bury/switch."}
         - Use grade_answer for normal grading with ease 1..4.
         - Use suspend_card when user wants to stop seeing this card (Aussetzen).
         - Use bury_card for temporary skip/defer.
@@ -43,9 +44,9 @@ object TutorBrain {
         - If user asks recommendation, call suggest_next_deck before the terminal tool.
         - Persist per-card user directives by calling set_card_tutor_instructions.
         - Persist speech-friendly rewrites by calling set_speech_verbalization.
-        - If the learner asks for a hint/reminder, include the reminder in assistant_speech AND STILL call grade_answer in the SAME RESPONSE.
-        - IMPORTANT: there is no open conversation mode in this app.
-        - Never end a response with only text or only reread_card_front.
+        - ${if (requireTerminalTool) "If the learner asks for a hint/reminder, include the reminder in assistant_speech AND STILL call grade_answer in the SAME RESPONSE." else "If the learner asks for a hint/reminder, include concise spoken help. Only grade if they asked to grade."}
+        - ${if (requireTerminalTool) "IMPORTANT: there is no open conversation mode in this app." else "IMPORTANT: this turn is chat-first deck navigation and metadata mode."}
+        - ${if (requireTerminalTool) "Never end a response with only text or only reread_card_front." else "It is valid to respond with text and non-terminal tools only (for example list_decks or metadata tools)."}
         - Keep assistant_speech concise by default.
         - CRITICAL: DO NOT output judgement labels in assistant_speech. Forbidden examples: "correct", "wrong", "incomplete", "genau", "richtig", "falsch", "unvollständig".
         - Avoid grading commentary; the app already handles rating feedback with sound.

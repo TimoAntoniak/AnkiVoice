@@ -82,6 +82,7 @@ data class ToolCall(
 )
 
 enum class TutorTerminalAction {
+    NONE,
     GRADE_ANSWER,
     SUSPEND_CARD,
     BURY_CARD,
@@ -319,6 +320,9 @@ fun parseSetSpeechVerbalizationArgs(raw: String): SetSpeechVerbalizationArgs = t
 
 fun validateTutorAction(action: TutorAction) {
     when (action.terminalAction) {
+        TutorTerminalAction.NONE -> require(action.ease == null) {
+            "none terminal action must not include ease"
+        }
         TutorTerminalAction.GRADE_ANSWER -> require(action.ease != null && action.ease in 1..4) {
             "grade_answer must return ease 1..4"
         }

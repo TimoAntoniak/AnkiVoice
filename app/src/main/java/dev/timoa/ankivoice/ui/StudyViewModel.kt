@@ -104,6 +104,10 @@ class StudyViewModel(
         _ui.update { it.copy(errorMessage = null) }
     }
 
+    fun clearTimeline() {
+        _ui.update { it.copy(timeline = emptyList()) }
+    }
+
     fun updateSimulationHeardText(value: String) {
         _ui.update { it.copy(simulationHeardText = value) }
     }
@@ -573,6 +577,13 @@ class StudyViewModel(
                 if (!_ui.value.sessionRunning) return
 
                 when (action.terminalAction) {
+                    TutorTerminalAction.NONE -> {
+                        // Study mode always requires a terminal tool, so treat NONE as a retryable failure.
+                        _ui.update { it.copy(phase = StudyPhase.SpeakingTutor) }
+                        v.speak(localized(cfg, "grade_failed_retry"))
+                        turn--
+                        continue
+                    }
                     TutorTerminalAction.GRADE_ANSWER -> {
                         val modelEase = action.ease?.takeIf { it in 1..4 } ?: 1
                         val maxAllowedEase = card.reviewButtonCount.coerceIn(1, 4)
@@ -732,6 +743,7 @@ class StudyViewModel(
         }
         parts.add(
             when (action.terminalAction) {
+                TutorTerminalAction.NONE -> "none"
                 TutorTerminalAction.GRADE_ANSWER -> TOOL_GRADE_ANSWER
                 TutorTerminalAction.SUSPEND_CARD -> TOOL_SUSPEND_CARD
                 TutorTerminalAction.BURY_CARD -> TOOL_BURY_CARD
@@ -835,6 +847,7 @@ class StudyViewModel(
                         },
                     recentLearnerResponses = if (cfg.adaptiveFeedbackHistoryEnabled) overlay.recentLearnerResponses else emptyList(),
                     deckSnapshot = deckSnapshot,
+                    requireTerminalTool = source != "chat_bootstrap",
                 ),
             )
         }

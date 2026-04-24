@@ -5,6 +5,11 @@ import dev.timoa.ankivoice.settings.LlmProvider
 import dev.timoa.ankivoice.settings.TtsBackend
 import dev.timoa.ankivoice.settings.UserSettings
 import kotlinx.coroutines.runBlocking
+import java.io.File
+import java.util.Properties
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -27,35 +32,90 @@ class TutorEvaluationHarnessTest {
                 cardFront = "What is the capital of France?",
                 cardBack = "Paris",
                 learnerAnswer = "Paris.",
+                expectedTerminal = TutorTerminalAction.GRADE_ANSWER,
             ),
             HarnessCase(
                 id = "partial_missing_key_concept",
                 cardFront = "Welche Eigenschaften muss ein Monoid erfüllen?",
                 cardBack = "Halbgruppe mit Abgeschlossenheit, Assoziativität und neutralem Element.",
                 learnerAnswer = "Monoid ist wie Halbgruppe mit Assoziativitaet.",
+                expectedTerminal = TutorTerminalAction.GRADE_ANSWER,
             ),
             HarnessCase(
                 id = "wrong_confused",
                 cardFront = "What is photosynthesis?",
                 cardBack = "Plants convert light energy into chemical energy.",
                 learnerAnswer = "It is when cells divide in two.",
+                expectedTerminal = TutorTerminalAction.GRADE_ANSWER,
             ),
             HarnessCase(
                 id = "hint_request",
                 cardFront = "Nenne die drei Newtonschen Gesetze in Kurzform.",
                 cardBack = "Traegheit, F = m*a, Actio gleich Reactio.",
                 learnerAnswer = "was war das nochmal? remind me",
+                expectedTerminal = TutorTerminalAction.GRADE_ANSWER,
             ),
             HarnessCase(
                 id = "language_control_german",
                 cardFront = "Was ist ein Monoid?",
                 cardBack = "Eine Halbgruppe mit neutralem Element.",
                 learnerAnswer = "Halbgruppe plus neutrales Element.",
+                expectedTerminal = TutorTerminalAction.GRADE_ANSWER,
+            ),
+            HarnessCase(
+                id = "chat_list_decks",
+                cardFront = "Deck navigation chat",
+                cardBack = "Use tools to list decks and switch decks.",
+                learnerAnswer = "What decks are left?",
+                expectedTerminal = null,
+            ),
+            HarnessCase(
+                id = "chat_suggest_not_math",
+                cardFront = "Deck navigation chat",
+                cardBack = "Use tools to suggest and switch decks.",
+                learnerAnswer = "Give me the next deck that's not math.",
+                expectedTerminal = null,
+            ),
+            HarnessCase(
+                id = "chat_suggest_similar",
+                cardFront = "Deck navigation chat",
+                cardBack = "Use tools to suggest and switch decks.",
+                learnerAnswer = "Give me something similar.",
+                expectedTerminal = null,
+            ),
+            HarnessCase(
+                id = "chat_choose_deck",
+                cardFront = "Deck navigation chat",
+                cardBack = "Use tools to list decks and switch decks.",
+                learnerAnswer = "Choose a deck for me.",
+                expectedTerminal = null,
+            ),
+            HarnessCase(
+                id = "chat_switch_by_name",
+                cardFront = "Deck navigation chat",
+                cardBack = "Use tools to switch deck.",
+                learnerAnswer = "Switch to biology deck.",
+                expectedTerminal = TutorTerminalAction.SWITCH_DECK,
+            ),
+            HarnessCase(
+                id = "metadata_ignore_order",
+                cardFront = "Name three causes of inflation.",
+                cardBack = "Demand pull, cost push, and monetary expansion.",
+                learnerAnswer = "Ignore the order for this card.",
+                expectedTerminal = null,
+            ),
+            HarnessCase(
+                id = "metadata_speech_rewrite",
+                cardFront = "Explain sigma notation.",
+                cardBack = "Sigma denotes summation over a sequence.",
+                learnerAnswer = "Please read formulas in words for this card.",
+                expectedTerminal = null,
             ),
         )
 
         var passed = 0
         val failures = mutableListOf<String>()
+        val caseReports = mutableListOf<String>()
         println("=== AnkiVoice Local LLM Harness ===")
         println("provider=${settings.provider} model=${settings.model} base=${settings.baseUrl}")
         println("cases=${cases.size}")
@@ -67,14 +127,25 @@ class TutorEvaluationHarnessTest {
                         cardFront = case.cardFront,
                         cardBack = case.cardBack,
                         learnerAnswer = case.learnerAnswer,
+                        requireTerminalTool = case.expectedTerminal != null,
                         settings = settings,
                     ),
                 )
                 val action = result.action
-                assertTrue("terminal action should be grade_answer for case=${case.id}", action.terminalAction == TutorTerminalAction.GRADE_ANSWER)
-                assertTrue("ease out of range for case=${case.id}", (action.ease ?: -1) in 1..4)
-                if ((action.ease ?: 0) <= 2) {
-                    assertTrue("assistant_speech should contain correction for case=${case.id}", action.assistantSpeech.isNotBlank())
+                case.expectedTerminal?.let { expected ->
+                    assertTrue(
+                        "terminal action mismatch for case=${case.id}; expected=$expected actual=${action.terminalAction}",
+                        action.terminalAction == expected,
+                    )
+                }
+                if (action.terminalAction == TutorTerminalAction.GRADE_ANSWER) {
+                    assertTrue("ease out of range for case=${case.id}", (action.ease ?: -1) in 1..4)
+                }
+                if (action.terminalAction == TutorTerminalAction.GRADE_ANSWER && (action.ease ?: 0) <= 2) {
+                    assertTrue(
+                        "assistant_speech should contain correction for case=${case.id}",
+                        action.assistantSpeech.isNotBlank(),
+                    )
                 }
                 println(
                     """
@@ -89,15 +160,43 @@ class TutorEvaluationHarnessTest {
                     ---
                     """.trimIndent(),
                 )
+                caseReports.add(
+                    """
+                    ## ${case.id}
+                    
+                    - Question: ${case.cardFront}
+                    - Expected answer: ${case.cardBack}
+                    - Learner answer: ${case.learnerAnswer}
+                    - Parsed terminal: ${action.terminalAction}
+                    - Parsed ease: ${action.ease}
+                    - Parsed assistant speech: ${action.assistantSpeech.ifBlank { "(empty)" }}
+                    
+                    ### Raw model output
+                    
+                    ${result.rawJson}
+                    """.trimIndent(),
+                )
                 passed++
             }.onFailure { e ->
                 failures.add("${case.id}: ${e.message ?: e::class.java.simpleName}")
                 println("CASE=${case.id} FAILED: ${e.message ?: e}")
+                caseReports.add(
+                    """
+                    ## ${case.id}
+                    
+                    - Question: ${case.cardFront}
+                    - Expected answer: ${case.cardBack}
+                    - Learner answer: ${case.learnerAnswer}
+                    - Result: FAILED
+                    - Error: ${e.message ?: e}
+                    """.trimIndent(),
+                )
             }
         }
 
         println("SUMMARY total=${cases.size} passed=$passed failed=${failures.size}")
         failures.forEach { println("FAILURE $it") }
+        writeHarnessReport(settings, caseReports, failures, passed, cases.size)
         assertTrue("One or more harness cases failed: $failures", failures.isEmpty())
     }
 
@@ -233,9 +332,10 @@ class TutorEvaluationHarnessTest {
     }
 
     private fun loadSettingsFromEnvOrNull(): UserSettings? {
-        val apiKey = System.getenv("ANKIVOICE_API_KEY")?.trim().orEmpty()
+        val dotenv = loadDotEnvLocal()
+        val apiKey = envOrDotEnv("ANKIVOICE_API_KEY", dotenv)
         if (apiKey.isEmpty()) return null
-        val providerRaw = System.getenv("ANKIVOICE_PROVIDER")?.trim().orEmpty()
+        val providerRaw = envOrDotEnv("ANKIVOICE_PROVIDER", dotenv)
         val provider = if (providerRaw.equals("anthropic", ignoreCase = true)) {
             LlmProvider.ANTHROPIC_CLAUDE
         } else {
@@ -255,14 +355,40 @@ class TutorEvaluationHarnessTest {
             provider = provider,
             language = AppLanguage.GERMAN,
             apiKey = apiKey,
-            baseUrl = (System.getenv("ANKIVOICE_BASE_URL") ?: defaultBase).trimEnd('/'),
-            model = System.getenv("ANKIVOICE_MODEL") ?: defaultModel,
+            baseUrl = envOrDotEnv("ANKIVOICE_BASE_URL", dotenv, defaultBase).trimEnd('/'),
+            model = envOrDotEnv("ANKIVOICE_MODEL", dotenv, defaultModel),
             ttsBackend = TtsBackend.SYSTEM,
             studyDeckId = -1L,
             skipTagsCsv = "",
             ttsRate = 1.0f,
             adaptiveFeedbackHistoryEnabled = false,
         )
+    }
+
+    private fun envOrDotEnv(
+        key: String,
+        dotenv: Properties,
+        default: String = "",
+    ): String {
+        val env = System.getenv(key)?.trim().orEmpty()
+        if (env.isNotEmpty()) return env
+        return dotenv.getProperty(key, default).trim()
+    }
+
+    private fun loadDotEnvLocal(): Properties {
+        val props = Properties()
+        val file = File(".env.local")
+        if (!file.exists()) return props
+        file.readLines().forEach { raw ->
+            val line = raw.trim()
+            if (line.isBlank() || line.startsWith("#")) return@forEach
+            val idx = line.indexOf('=')
+            if (idx <= 0) return@forEach
+            val key = line.substring(0, idx).trim()
+            val value = line.substring(idx + 1).trim().trim('"').trim('\'')
+            props.setProperty(key, value)
+        }
+        return props
     }
 
     private fun defaultOpenAiLikeSettings(): UserSettings =
@@ -279,6 +405,38 @@ class TutorEvaluationHarnessTest {
             adaptiveFeedbackHistoryEnabled = false,
         )
 
+    private fun writeHarnessReport(
+        settings: UserSettings,
+        caseReports: List<String>,
+        failures: List<String>,
+        passed: Int,
+        total: Int,
+    ) {
+        val reportsDir = File("build/reports/ankivoice")
+        reportsDir.mkdirs()
+        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+        val body = buildString {
+            appendLine("# AnkiVoice Conversation Harness")
+            appendLine()
+            appendLine("- Generated at: ${Date()}")
+            appendLine("- Provider: ${settings.provider}")
+            appendLine("- Model: ${settings.model}")
+            appendLine("- Base URL: ${settings.baseUrl}")
+            appendLine("- Passed: $passed / $total")
+            appendLine("- Failed: ${failures.size}")
+            appendLine()
+            if (failures.isNotEmpty()) {
+                appendLine("## Failures")
+                failures.forEach { appendLine("- $it") }
+                appendLine()
+            }
+            append(caseReports.joinToString("\n\n---\n\n"))
+            appendLine()
+        }
+        File(reportsDir, "conversation-harness-$stamp.md").writeText(body)
+        File(reportsDir, "conversation-harness-latest.md").writeText(body)
+    }
+
 }
 
 private data class HarnessCase(
@@ -286,4 +444,5 @@ private data class HarnessCase(
     val cardFront: String,
     val cardBack: String,
     val learnerAnswer: String,
+    val expectedTerminal: TutorTerminalAction?,
 )
