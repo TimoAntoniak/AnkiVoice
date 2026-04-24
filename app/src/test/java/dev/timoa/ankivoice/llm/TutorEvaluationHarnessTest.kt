@@ -33,6 +33,7 @@ class TutorEvaluationHarnessTest {
                 cardBack = "Paris",
                 learnerAnswer = "Paris.",
                 expectedTerminal = TutorTerminalAction.GRADE_ANSWER,
+                expectedSpeechLanguage = "en",
             ),
             HarnessCase(
                 id = "partial_missing_key_concept",
@@ -40,6 +41,7 @@ class TutorEvaluationHarnessTest {
                 cardBack = "Halbgruppe mit Abgeschlossenheit, Assoziativität und neutralem Element.",
                 learnerAnswer = "Monoid ist wie Halbgruppe mit Assoziativitaet.",
                 expectedTerminal = TutorTerminalAction.GRADE_ANSWER,
+                expectedSpeechLanguage = "de",
             ),
             HarnessCase(
                 id = "wrong_confused",
@@ -47,6 +49,7 @@ class TutorEvaluationHarnessTest {
                 cardBack = "Plants convert light energy into chemical energy.",
                 learnerAnswer = "It is when cells divide in two.",
                 expectedTerminal = TutorTerminalAction.GRADE_ANSWER,
+                expectedSpeechLanguage = "de",
             ),
             HarnessCase(
                 id = "hint_request",
@@ -54,6 +57,7 @@ class TutorEvaluationHarnessTest {
                 cardBack = "Traegheit, F = m*a, Actio gleich Reactio.",
                 learnerAnswer = "was war das nochmal? remind me",
                 expectedTerminal = TutorTerminalAction.GRADE_ANSWER,
+                expectedSpeechLanguage = "de",
             ),
             HarnessCase(
                 id = "language_control_german",
@@ -61,6 +65,7 @@ class TutorEvaluationHarnessTest {
                 cardBack = "Eine Halbgruppe mit neutralem Element.",
                 learnerAnswer = "Halbgruppe plus neutrales Element.",
                 expectedTerminal = TutorTerminalAction.GRADE_ANSWER,
+                expectedSpeechLanguage = "de",
             ),
             HarnessCase(
                 id = "chat_list_decks",
@@ -96,6 +101,7 @@ class TutorEvaluationHarnessTest {
                 cardBack = "Use tools to switch deck.",
                 learnerAnswer = "Switch to biology deck.",
                 expectedTerminal = TutorTerminalAction.SWITCH_DECK,
+                expectedSpeechLanguage = "en",
             ),
             HarnessCase(
                 id = "metadata_ignore_order",
@@ -111,24 +117,67 @@ class TutorEvaluationHarnessTest {
                 learnerAnswer = "Please read formulas in words for this card.",
                 expectedTerminal = null,
             ),
+            HarnessCase(
+                id = "matrix_en_card_en_app",
+                cardFront = "What is entropy in one sentence?",
+                cardBack = "A measure of uncertainty in a system.",
+                learnerAnswer = "It measures uncertainty.",
+                expectedTerminal = TutorTerminalAction.GRADE_ANSWER,
+                expectedSpeechLanguage = "en",
+                settingsLanguage = AppLanguage.ENGLISH,
+                assistantSpeechLanguagePolicy = AssistantSpeechLanguagePolicy.APP_LANGUAGE,
+            ),
+            HarnessCase(
+                id = "matrix_de_card_en_app",
+                cardFront = "Was ist die Hauptstadt von Frankreich?",
+                cardBack = "Paris.",
+                learnerAnswer = "London.",
+                expectedTerminal = TutorTerminalAction.GRADE_ANSWER,
+                expectedSpeechLanguage = "en",
+                settingsLanguage = AppLanguage.ENGLISH,
+                assistantSpeechLanguagePolicy = AssistantSpeechLanguagePolicy.APP_LANGUAGE,
+            ),
+            HarnessCase(
+                id = "matrix_en_card_de_app",
+                cardFront = "What is photosynthesis?",
+                cardBack = "Plants convert light energy into chemical energy.",
+                learnerAnswer = "Cell division.",
+                expectedTerminal = TutorTerminalAction.GRADE_ANSWER,
+                expectedSpeechLanguage = "de",
+                settingsLanguage = AppLanguage.GERMAN,
+                assistantSpeechLanguagePolicy = AssistantSpeechLanguagePolicy.APP_LANGUAGE,
+            ),
+            HarnessCase(
+                id = "matrix_en_card_card_policy",
+                cardFront = "What is diffusion?",
+                cardBack = "Particles spread from higher to lower concentration.",
+                learnerAnswer = "It's when particles move from higher to lower concentration.",
+                expectedTerminal = TutorTerminalAction.GRADE_ANSWER,
+                expectedSpeechLanguage = "en",
+                settingsLanguage = AppLanguage.GERMAN,
+                assistantSpeechLanguagePolicy = AssistantSpeechLanguagePolicy.CARD_LANGUAGE,
+            ),
         )
 
         var passed = 0
         val failures = mutableListOf<String>()
         val caseReports = mutableListOf<String>()
+        val caseResults = mutableListOf<HarnessCaseResult>()
         println("=== AnkiVoice Local LLM Harness ===")
         println("provider=${settings.provider} model=${settings.model} base=${settings.baseUrl}")
         println("cases=${cases.size}")
 
         for (case in cases) {
             runCatching {
+                val caseSettings = settings.copy(language = case.settingsLanguage ?: settings.language)
                 val result = service.evaluate(
                     TutorEvaluationRequest(
                         cardFront = case.cardFront,
                         cardBack = case.cardBack,
                         learnerAnswer = case.learnerAnswer,
                         requireTerminalTool = case.expectedTerminal != null,
-                        settings = settings,
+                        assistantSpeechLanguagePolicy = case.assistantSpeechLanguagePolicy,
+                        settings = caseSettings,
                     ),
                 )
                 val action = result.action
@@ -145,6 +194,21 @@ class TutorEvaluationHarnessTest {
                     assertTrue(
                         "assistant_speech should contain correction for case=${case.id}",
                         action.assistantSpeech.isNotBlank(),
+                    )
+                }
+                case.expectedSpeechLanguage?.let { expectedLang ->
+                    val speech = action.assistantSpeech.trim()
+                    if (speech.isNotBlank()) {
+                        assertTrue(
+                            "assistant_speech language mismatch for case=${case.id}; expected=$expectedLang speech=$speech",
+                            isLikelyLanguage(speech, expectedLang),
+                        )
+                    }
+                }
+                if (case.id == "metadata_speech_rewrite") {
+                    assertTrue(
+                        "metadata_speech_rewrite should call set_speech_verbalization",
+                        result.rawJson.contains("\"name\":\"set_speech_verbalization\""),
                     )
                 }
                 println(
@@ -176,6 +240,23 @@ class TutorEvaluationHarnessTest {
                     ${result.rawJson}
                     """.trimIndent(),
                 )
+                caseResults.add(
+                    HarnessCaseResult(
+                        id = case.id,
+                        question = case.cardFront,
+                        expectedAnswer = case.cardBack,
+                        learnerAnswer = case.learnerAnswer,
+                        expectedTerminal = case.expectedTerminal?.name,
+                        parsedTerminal = action.terminalAction.name,
+                        parsedEase = action.ease,
+                        parsedAssistantSpeech = action.assistantSpeech,
+                        passed = true,
+                        failure = null,
+                        rawModelOutput = result.rawJson,
+                        settingsLanguage = caseSettings.language.name,
+                        assistantSpeechLanguagePolicy = case.assistantSpeechLanguagePolicy.name,
+                    ),
+                )
                 passed++
             }.onFailure { e ->
                 failures.add("${case.id}: ${e.message ?: e::class.java.simpleName}")
@@ -191,12 +272,36 @@ class TutorEvaluationHarnessTest {
                     - Error: ${e.message ?: e}
                     """.trimIndent(),
                 )
+                caseResults.add(
+                    HarnessCaseResult(
+                        id = case.id,
+                        question = case.cardFront,
+                        expectedAnswer = case.cardBack,
+                        learnerAnswer = case.learnerAnswer,
+                        expectedTerminal = case.expectedTerminal?.name,
+                        parsedTerminal = null,
+                        parsedEase = null,
+                        parsedAssistantSpeech = null,
+                        passed = false,
+                        failure = e.message ?: e::class.java.simpleName,
+                        rawModelOutput = "",
+                        settingsLanguage = (case.settingsLanguage ?: settings.language).name,
+                        assistantSpeechLanguagePolicy = case.assistantSpeechLanguagePolicy.name,
+                    ),
+                )
             }
         }
 
         println("SUMMARY total=${cases.size} passed=$passed failed=${failures.size}")
         failures.forEach { println("FAILURE $it") }
-        writeHarnessReport(settings, caseReports, failures, passed, cases.size)
+        writeHarnessReport(
+            settings = settings,
+            caseReports = caseReports,
+            failures = failures,
+            passed = passed,
+            total = cases.size,
+            caseResults = caseResults,
+        )
         assertTrue("One or more harness cases failed: $failures", failures.isEmpty())
     }
 
@@ -365,6 +470,19 @@ class TutorEvaluationHarnessTest {
         )
     }
 
+    private fun isLikelyLanguage(text: String, expected: String): Boolean {
+        val s = " ${text.lowercase(Locale.ROOT)} "
+        val germanScore = listOf(" der ", " die ", " das ", " und ", " ist ", " nicht ", " ein ", " eine ")
+            .count { s.contains(it) } + if (Regex("[äöüß]").containsMatchIn(s)) 2 else 0
+        val englishScore = listOf(" the ", " and ", " is ", " not ", " a ", " an ", " of ", " to ")
+            .count { s.contains(it) }
+        return when (expected) {
+            "de" -> germanScore >= englishScore
+            "en" -> englishScore >= germanScore
+            else -> true
+        }
+    }
+
     private fun envOrDotEnv(
         key: String,
         dotenv: Properties,
@@ -411,19 +529,26 @@ class TutorEvaluationHarnessTest {
         failures: List<String>,
         passed: Int,
         total: Int,
+        caseResults: List<HarnessCaseResult>,
     ) {
         val reportsDir = File("build/reports/ankivoice")
         reportsDir.mkdirs()
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+        val now = Date()
+        val gitBranch = gitValue("rev-parse --abbrev-ref HEAD") ?: "(unknown)"
+        val gitCommit = gitValue("rev-parse --short HEAD") ?: "(unknown)"
+        val failuresCount = failures.size
         val body = buildString {
             appendLine("# AnkiVoice Conversation Harness")
             appendLine()
-            appendLine("- Generated at: ${Date()}")
+            appendLine("- Generated at: $now")
             appendLine("- Provider: ${settings.provider}")
             appendLine("- Model: ${settings.model}")
             appendLine("- Base URL: ${settings.baseUrl}")
+            appendLine("- Branch: $gitBranch")
+            appendLine("- Commit: $gitCommit")
             appendLine("- Passed: $passed / $total")
-            appendLine("- Failed: ${failures.size}")
+            appendLine("- Failed: $failuresCount")
             appendLine()
             if (failures.isNotEmpty()) {
                 appendLine("## Failures")
@@ -433,11 +558,241 @@ class TutorEvaluationHarnessTest {
             append(caseReports.joinToString("\n\n---\n\n"))
             appendLine()
         }
-        File(reportsDir, "conversation-harness-$stamp.md").writeText(body)
-        File(reportsDir, "conversation-harness-latest.md").writeText(body)
+        val markdownTimestamped = File(reportsDir, "conversation-harness-$stamp.md")
+        val markdownLatest = File(reportsDir, "conversation-harness-latest.md")
+        markdownTimestamped.writeText(body)
+        markdownLatest.writeText(body)
+
+        val jsonBody = buildHarnessJson(
+            generatedAt = now,
+            provider = settings.provider.name,
+            model = settings.model,
+            baseUrl = settings.baseUrl,
+            branch = gitBranch,
+            commit = gitCommit,
+            passed = passed,
+            total = total,
+            failures = failures,
+            cases = caseResults,
+        )
+        val jsonTimestamped = File(reportsDir, "conversation-harness-$stamp.json")
+        val jsonLatest = File(reportsDir, "conversation-harness-latest.json")
+        jsonTimestamped.writeText(jsonBody)
+        jsonLatest.writeText(jsonBody)
+
+        val htmlBody = buildHarnessHtml(
+            generatedAt = now,
+            provider = settings.provider.name,
+            model = settings.model,
+            baseUrl = settings.baseUrl,
+            branch = gitBranch,
+            commit = gitCommit,
+            passed = passed,
+            total = total,
+            failures = failures,
+            cases = caseResults,
+        )
+        val htmlTimestamped = File(reportsDir, "conversation-harness-$stamp.html")
+        val htmlLatest = File(reportsDir, "conversation-harness-latest.html")
+        htmlTimestamped.writeText(htmlBody)
+        htmlLatest.writeText(htmlBody)
     }
 
+    private fun buildHarnessJson(
+        generatedAt: Date,
+        provider: String,
+        model: String,
+        baseUrl: String,
+        branch: String,
+        commit: String,
+        passed: Int,
+        total: Int,
+        failures: List<String>,
+        cases: List<HarnessCaseResult>,
+    ): String =
+        buildString {
+            append("{\n")
+            append("  \"generated_at\": \"${jsonEscape(generatedAt.toString())}\",\n")
+            append("  \"provider\": \"${jsonEscape(provider)}\",\n")
+            append("  \"model\": \"${jsonEscape(model)}\",\n")
+            append("  \"base_url\": \"${jsonEscape(baseUrl)}\",\n")
+            append("  \"branch\": \"${jsonEscape(branch)}\",\n")
+            append("  \"commit\": \"${jsonEscape(commit)}\",\n")
+            append("  \"summary\": {\n")
+            append("    \"passed\": $passed,\n")
+            append("    \"total\": $total,\n")
+            append("    \"failed\": ${failures.size}\n")
+            append("  },\n")
+            append("  \"failures\": [\n")
+            failures.forEachIndexed { idx, failure ->
+                append("    \"${jsonEscape(failure)}\"")
+                if (idx < failures.lastIndex) append(",")
+                append("\n")
+            }
+            append("  ],\n")
+            append("  \"cases\": [\n")
+            cases.forEachIndexed { idx, case ->
+                append("    {\n")
+                append("      \"id\": \"${jsonEscape(case.id)}\",\n")
+                append("      \"question\": \"${jsonEscape(case.question)}\",\n")
+                append("      \"expected_answer\": \"${jsonEscape(case.expectedAnswer)}\",\n")
+                append("      \"learner_answer\": \"${jsonEscape(case.learnerAnswer)}\",\n")
+                append("      \"expected_terminal\": ${jsonOrNull(case.expectedTerminal)},\n")
+                append("      \"parsed_terminal\": ${jsonOrNull(case.parsedTerminal)},\n")
+                append("      \"parsed_ease\": ${case.parsedEase?.toString() ?: "null"},\n")
+                append("      \"parsed_assistant_speech\": ${jsonOrNull(case.parsedAssistantSpeech)},\n")
+                append("      \"settings_language\": \"${jsonEscape(case.settingsLanguage)}\",\n")
+                append("      \"assistant_speech_language_policy\": \"${jsonEscape(case.assistantSpeechLanguagePolicy)}\",\n")
+                append("      \"passed\": ${case.passed},\n")
+                append("      \"failure\": ${jsonOrNull(case.failure)},\n")
+                append("      \"raw_model_output\": ${jsonOrNull(case.rawModelOutput)}\n")
+                append("    }")
+                if (idx < cases.lastIndex) append(",")
+                append("\n")
+            }
+            append("  ]\n")
+            append("}\n")
+        }
+
+    private fun buildHarnessHtml(
+        generatedAt: Date,
+        provider: String,
+        model: String,
+        baseUrl: String,
+        branch: String,
+        commit: String,
+        passed: Int,
+        total: Int,
+        failures: List<String>,
+        cases: List<HarnessCaseResult>,
+    ): String =
+        buildString {
+            appendLine("<!doctype html>")
+            appendLine("<html lang=\"en\">")
+            appendLine("<head>")
+            appendLine("  <meta charset=\"utf-8\" />")
+            appendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />")
+            appendLine("  <title>AnkiVoice Conversation Harness</title>")
+            appendLine("  <style>")
+            appendLine("    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 24px; color: #222; }")
+            appendLine("    h1 { margin-bottom: 8px; }")
+            appendLine("    .meta { display: grid; grid-template-columns: 180px 1fr; row-gap: 6px; column-gap: 10px; margin-bottom: 20px; }")
+            appendLine("    .meta dt { font-weight: 600; color: #555; }")
+            appendLine("    .meta dd { margin: 0; }")
+            appendLine("    .ok { color: #0a7a2f; font-weight: 700; }")
+            appendLine("    .fail { color: #b42318; font-weight: 700; }")
+            appendLine("    table { width: 100%; border-collapse: collapse; margin-top: 12px; }")
+            appendLine("    th, td { border: 1px solid #ddd; padding: 8px; vertical-align: top; text-align: left; font-size: 13px; }")
+            appendLine("    th { background: #f6f6f6; position: sticky; top: 0; }")
+            appendLine("    tr:nth-child(even) { background: #fcfcfc; }")
+            appendLine("    details { margin-top: 6px; }")
+            appendLine("    pre { white-space: pre-wrap; font-size: 12px; margin: 6px 0 0; }")
+            appendLine("    .fail-list li { margin-bottom: 4px; }")
+            appendLine("  </style>")
+            appendLine("</head>")
+            appendLine("<body>")
+            appendLine("  <h1>AnkiVoice Conversation Harness</h1>")
+            appendLine("  <dl class=\"meta\">")
+            appendLine("    <dt>Generated at</dt><dd>${htmlEscape(generatedAt.toString())}</dd>")
+            appendLine("    <dt>Provider</dt><dd>${htmlEscape(provider)}</dd>")
+            appendLine("    <dt>Model</dt><dd>${htmlEscape(model)}</dd>")
+            appendLine("    <dt>Base URL</dt><dd>${htmlEscape(baseUrl)}</dd>")
+            appendLine("    <dt>Branch</dt><dd>${htmlEscape(branch)}</dd>")
+            appendLine("    <dt>Commit</dt><dd>${htmlEscape(commit)}</dd>")
+            appendLine("    <dt>Passed</dt><dd class=\"ok\">$passed / $total</dd>")
+            appendLine("    <dt>Failed</dt><dd class=\"${if (failures.isEmpty()) "ok" else "fail"}\">${failures.size}</dd>")
+            appendLine("  </dl>")
+            if (failures.isNotEmpty()) {
+                appendLine("  <h2>Failures</h2>")
+                appendLine("  <ul class=\"fail-list\">")
+                failures.forEach { failure ->
+                    appendLine("    <li>${htmlEscape(failure)}</li>")
+                }
+                appendLine("  </ul>")
+            }
+            appendLine("  <h2>Cases</h2>")
+            appendLine("  <table>")
+            appendLine("    <thead>")
+            appendLine("      <tr>")
+            appendLine("        <th>ID</th><th>Result</th><th>Expected terminal</th><th>Parsed terminal</th><th>Ease</th><th>Question</th><th>Learner answer</th><th>Assistant speech</th><th>Lang/Policy</th><th>Raw output</th>")
+            appendLine("      </tr>")
+            appendLine("    </thead>")
+            appendLine("    <tbody>")
+            cases.forEach { case ->
+                appendLine("      <tr>")
+                appendLine("        <td>${htmlEscape(case.id)}</td>")
+                appendLine("        <td class=\"${if (case.passed) "ok" else "fail"}\">${if (case.passed) "PASS" else "FAIL"}</td>")
+                appendLine("        <td>${htmlEscape(case.expectedTerminal ?: "-")}</td>")
+                appendLine("        <td>${htmlEscape(case.parsedTerminal ?: "-")}</td>")
+                appendLine("        <td>${case.parsedEase?.toString() ?: "-"}</td>")
+                appendLine("        <td>${htmlEscape(case.question)}</td>")
+                appendLine("        <td>${htmlEscape(case.learnerAnswer)}</td>")
+                appendLine("        <td>${htmlEscape(case.parsedAssistantSpeech ?: "-")}</td>")
+                appendLine("        <td>${htmlEscape(case.settingsLanguage)} / ${htmlEscape(case.assistantSpeechLanguagePolicy)}</td>")
+                appendLine("        <td>")
+                if (!case.rawModelOutput.isNullOrBlank()) {
+                    appendLine("          <details><summary>Show raw</summary><pre>${htmlEscape(case.rawModelOutput)}</pre></details>")
+                } else {
+                    appendLine("          -")
+                }
+                if (!case.failure.isNullOrBlank()) {
+                    appendLine("          <div class=\"fail\">${htmlEscape(case.failure)}</div>")
+                }
+                appendLine("        </td>")
+                appendLine("      </tr>")
+            }
+            appendLine("    </tbody>")
+            appendLine("  </table>")
+            appendLine("</body>")
+            appendLine("</html>")
+        }
+
+    private fun gitValue(args: String): String? =
+        runCatching {
+            val parts = args.split(" ")
+            val process = ProcessBuilder(listOf("git") + parts)
+                .redirectErrorStream(true)
+                .start()
+            val output = process.inputStream.bufferedReader().readText().trim()
+            val exit = process.waitFor()
+            if (exit == 0 && output.isNotBlank()) output else null
+        }.getOrNull()
+
+    private fun jsonEscape(value: String): String =
+        value
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t")
+
+    private fun jsonOrNull(value: String?): String = value?.let { "\"${jsonEscape(it)}\"" } ?: "null"
+
+    private fun htmlEscape(value: String): String =
+        value
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\"", "&quot;")
+            .replace("'", "&#39;")
+
 }
+
+private data class HarnessCaseResult(
+    val id: String,
+    val question: String,
+    val expectedAnswer: String,
+    val learnerAnswer: String,
+    val expectedTerminal: String?,
+    val parsedTerminal: String?,
+    val parsedEase: Int?,
+    val parsedAssistantSpeech: String?,
+    val settingsLanguage: String,
+    val assistantSpeechLanguagePolicy: String,
+    val passed: Boolean,
+    val failure: String?,
+    val rawModelOutput: String?,
+)
 
 private data class HarnessCase(
     val id: String,
@@ -445,4 +800,7 @@ private data class HarnessCase(
     val cardBack: String,
     val learnerAnswer: String,
     val expectedTerminal: TutorTerminalAction?,
+    val expectedSpeechLanguage: String? = null,
+    val settingsLanguage: AppLanguage? = null,
+    val assistantSpeechLanguagePolicy: AssistantSpeechLanguagePolicy = AssistantSpeechLanguagePolicy.APP_LANGUAGE,
 )

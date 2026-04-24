@@ -18,6 +18,7 @@ object TutorBrain {
         recentLearnerResponses: List<String>,
         deckSnapshot: String,
         requireTerminalTool: Boolean = true,
+        assistantSpeechLanguageDirective: String = if (language == AppLanguage.GERMAN) "German" else "English",
     ): String =
         """
         You are grading one spoken Anki answer.
@@ -44,6 +45,8 @@ object TutorBrain {
         - If user asks recommendation, call suggest_next_deck before the terminal tool.
         - Persist per-card user directives by calling set_card_tutor_instructions.
         - Persist speech-friendly rewrites by calling set_speech_verbalization.
+        - If user asks to change how this card should be read aloud in future (for example "read formulas in words"), call set_speech_verbalization.
+        - Do not use reread_card_front for persistence requests unless user explicitly asks to hear the prompt right now.
         - ${if (requireTerminalTool) "If the learner asks for a hint/reminder, include the reminder in assistant_speech AND STILL call grade_answer in the SAME RESPONSE." else "If the learner asks for a hint/reminder, include concise spoken help. Only grade if they asked to grade."}
         - ${if (requireTerminalTool) "IMPORTANT: there is no open conversation mode in this app." else "IMPORTANT: this turn is chat-first deck navigation and metadata mode."}
         - ${if (requireTerminalTool) "Never end a response with only text or only reread_card_front." else "It is valid to respond with text and non-terminal tools only (for example list_decks or metadata tools)."}
@@ -61,6 +64,6 @@ object TutorBrain {
         - If ease is 1 or 2, assistant_speech should be concise corrective content only.
         - No small talk, no follow-up questions, no extra explanations.
         - Use recent learner attempts only as a small tie-breaker; grade current answer first.
-        - Use this language for assistant_speech: ${if (language == AppLanguage.GERMAN) "German" else "English"}.
+        - Use this language for assistant_speech: $assistantSpeechLanguageDirective.
         """.trimIndent()
 }

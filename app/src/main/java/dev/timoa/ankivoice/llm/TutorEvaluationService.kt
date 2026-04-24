@@ -12,7 +12,13 @@ data class TutorEvaluationRequest(
     val recentLearnerResponses: List<String> = emptyList(),
     val deckSnapshot: String = "",
     val requireTerminalTool: Boolean = true,
+    val assistantSpeechLanguagePolicy: AssistantSpeechLanguagePolicy = AssistantSpeechLanguagePolicy.APP_LANGUAGE,
 )
+
+enum class AssistantSpeechLanguagePolicy {
+    APP_LANGUAGE,
+    CARD_LANGUAGE,
+}
 
 data class TutorEvaluationResult(
     val conversation: List<ChatMessage>,
@@ -47,6 +53,13 @@ class TutorEvaluationService(
                     recentLearnerResponses = request.recentLearnerResponses,
                     deckSnapshot = request.deckSnapshot,
                     requireTerminalTool = request.requireTerminalTool,
+                    assistantSpeechLanguageDirective =
+                        resolveAssistantSpeechLanguageDirective(
+                            request.assistantSpeechLanguagePolicy,
+                            request.settings.language,
+                            request.cardFront,
+                            request.cardBack,
+                        ),
                 ),
             ),
             ChatMessage("user", request.learnerAnswer),
@@ -209,5 +222,37 @@ class TutorEvaluationService(
 
     private fun ensureSingleTerminal(current: TutorTerminalAction?, nextTool: String) {
         require(current == null) { "Model returned multiple terminal actions; saw duplicate via $nextTool" }
+    }
+
+    private fun resolveAssistantSpeechLanguageDirective(
+        policy: AssistantSpeechLanguagePolicy,
+        appLanguage: dev.timoa.ankivoice.settings.AppLanguage,
+        cardFront: String,
+        cardBack: String,
+    ): String =
+        when (policy) {
+            AssistantSpeechLanguagePolicy.APP_LANGUAGE ->
+                if (appLanguage == dev.timoa.ankivoice.settings.AppLanguage.GERMAN) "German" else "English"
+            AssistantSpeechLanguagePolicy.CARD_LANGUAGE ->
+                if (looksGerman("$cardFront $cardBack")) "German" else "English"
+        }
+
+    private fun looksGerman(text: String): Boolean {
+        val s = text.lowercase()
+        if (Regex("[äöüß]").containsMatchIn(s)) return true
+        val germanMarkers = listOf(
+            " der ",
+            " die ",
+            " das ",
+            " und ",
+            " ist ",
+            " ein ",
+            " eine ",
+            " nicht ",
+            " welche ",
+            " nenne ",
+            " was ",
+        )
+        return germanMarkers.any { marker -> s.contains(marker) }
     }
 }
